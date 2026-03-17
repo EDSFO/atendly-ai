@@ -33,8 +33,8 @@ export default function App() {
 
   const handleLogin = (tenant: any) => {
     setLoggedInTenant(tenant);
-    // Redirecionar para página da empresa ou admin
-    navigate(`/${tenant.slug}/admin`);
+    // Redirecionar para página de chat (página principal)
+    navigate(`/${tenant.slug}`);
   };
 
   const handleLogout = () => {
@@ -270,8 +270,34 @@ function TenantApp({ slug, onNavigate, onLogout, loggedInTenant }: {
   }
 
   // Página principal = apenas Chat (via chat ou WhatsApp)
+  const tenantSlug = slug || tenant?.slug;
   return (
     <div className="min-h-screen bg-gray-100">
+      {/* Header com link para Admin */}
+      <header className="bg-white shadow-sm border-b border-gray-200 px-6 py-3">
+        <div className="flex justify-between items-center max-w-7xl mx-auto">
+          <h1 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: tenant.theme_color }} />
+            {tenant.name}
+          </h1>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onNavigate(`/${tenantSlug}/admin`)}
+              className="text-sm text-gray-600 hover:text-gray-900 px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
+            >
+              Configurar Agentes
+            </button>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="text-sm text-red-600 hover:text-red-700 px-3 py-1 rounded border border-red-200 hover:bg-red-50"
+              >
+                Sair
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
       <ChatWidget tenant={tenant} />
     </div>
   );

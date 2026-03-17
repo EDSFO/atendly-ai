@@ -31,11 +31,14 @@ export default function ChatWidget({ tenant }: ChatWidgetProps) {
       .then(data => {
         setAgents(data);
         if (data.length > 0) {
-          setSelectedAgentId(data[0].id);
+          // Use tenant's default_agent_id if available, otherwise first agent
+          const defaultId = tenant.default_agent_id;
+          const validDefault = defaultId && data.some((a: any) => a.id === defaultId);
+          setSelectedAgentId(validDefault ? defaultId : data[0].id);
         }
       })
       .catch(() => {});
-  }, [tenant.id]);
+  }, [tenant.id, tenant.default_agent_id]);
 
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
@@ -56,13 +59,16 @@ export default function ChatWidget({ tenant }: ChatWidgetProps) {
     setIsLoading(true);
 
     try {
+      // Se não há agente selecionado, usar o primeiro disponível
+      const agentIdToUse = selectedAgentId || (agents.length > 0 ? agents[0].id : null);
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMsg,
           tenant_id: tenant.id,
-          agent_id: selectedAgentId,
+          agent_id: agentIdToUse,
           history: messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text }))
         }),
       });

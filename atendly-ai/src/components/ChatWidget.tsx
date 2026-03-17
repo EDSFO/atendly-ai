@@ -74,7 +74,9 @@ export default function ChatWidget({ tenant }: ChatWidgetProps) {
       });
 
       const data = await res.json();
-      setMessages(prev => [...prev, { role: 'model', text: data.text }]);
+      // Support both text and response fields
+      const responseText = data.text || data.response || 'Erro ao processar resposta';
+      setMessages(prev => [...prev, { role: 'model', text: responseText }]);
     } catch (error) {
       setMessages(prev => [...prev, { role: 'model', text: "Desculpe, ocorreu um erro. Tente novamente." }]);
     } finally {

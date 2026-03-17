@@ -23,7 +23,18 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
     custom_description: '',
     custom_prompt: ''
   });
-  
+
+  // Estado para edição de personalidade
+  const [editingPersonality, setEditingPersonality] = useState(false);
+  const [personalityForm, setPersonalityForm] = useState({
+    tone: 'professional',
+    vocabulary: '',
+    greeting: '',
+    closing: '',
+    rules: '',
+    forbidden: ''
+  });
+
   useEffect(() => {
     setTenant(initialTenant);
   }, [initialTenant]);
@@ -47,6 +58,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
   const [newService, setNewService] = useState({ name: '', price: '', duration: '' });
   const [newProfessional, setNewProfessional] = useState({ name: '', specialty: '' });
   const [aiContext, setAiContext] = useState(tenant.ai_context || '');
+  const [defaultAgentId, setDefaultAgentId] = useState<number | null>(tenant.default_agent_id || null);
   const [isSaving, setIsSaving] = useState(false);
   
   // Website Scan State
@@ -57,7 +69,8 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
   useEffect(() => {
     fetch(`/api/tenants/${tenant.id}/services`).then(r => r.json()).then(setServices);
     fetch(`/api/tenants/${tenant.id}/professionals`).then(r => r.json()).then(setProfessionals);
-    
+    fetch(`/api/tenants/${tenant.id}/agents`).then(r => r.json()).then(setAgents);
+
     // Check WhatsApp status on load if we have a config
     fetch(`/api/whatsapp/status/${tenant.id}`).then(r => {
       if (r.ok) return r.json();
@@ -83,6 +96,31 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
       fetch(`/api/agents/${selectedAgent.id}/documents`).then(r => r.json()).then(setAgentDocuments);
     }
   }, [selectedAgent]);
+
+  // Função para salvar personalidade do agente
+  const savePersonality = async (agentId: number) => {
+    try {
+      const personality = {
+        tone: personalityForm.tone,
+        vocabulary: personalityForm.vocabulary.split(',').map(v => v.trim()).filter(v => v),
+        greeting: personalityForm.greeting,
+        closing: personalityForm.closing,
+        rules: personalityForm.rules.split('\n').filter(r => r.trim()),
+        forbidden: personalityForm.forbidden.split(',').map(f => f.trim()).filter(f => f)
+      };
+
+      await fetch(`/api/agents/${agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personality: JSON.stringify(personality) })
+      });
+
+      setEditingPersonality(false);
+      fetch(`/api/tenants/${tenant.id}/agents`).then(r => r.json()).then(setAgents);
+    } catch (error) {
+      console.error('Error saving personality:', error);
+    }
+  };
 
   const fetchQrCode = async () => {
     setIsLoadingQr(true);
@@ -140,7 +178,8 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
       body: JSON.stringify({
         name: tenant.name,
         theme_color: tenant.theme_color,
-        ai_context: aiContext
+        ai_context: aiContext,
+        default_agent_id: defaultAgentId
       })
     });
     setIsSaving(false);
@@ -439,6 +478,25 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
                           className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
                         >
                           <Trash2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            // Carregar personalidade existente ou usar valores padrão
+                            const existingPersonality = selectedAgent.personality ? JSON.parse(selectedAgent.personality) : null;
+                            setPersonalityForm({
+                              tone: existingPersonality?.tone || 'professional',
+                              vocabulary: existingPersonality?.vocabulary?.join(', ') || '',
+                              greeting: existingPersonality?.greeting || '',
+                              closing: existingPersonality?.closing || '',
+                              rules: existingPersonality?.rules?.join('\n') || '',
+                              forbidden: existingPersonality?.forbidden?.join(', ') || ''
+                            });
+                            setEditingPersonality(true);
+                          }}
+                          className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 flex items-center gap-1"
+                        >
+                          <Edit className="w-4 h-4" />
+                          Personalidade
                         </button>
                       </div>
                     </div>
@@ -865,6 +923,29 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
                   </div>
                 </div>
 
+                {/* Agente Padrão para Clientes */}
+                <div className="border-t border-gray-200 pt-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Bot className="w-5 h-5 text-blue-600" />
+                    <h3 className="text-lg font-medium text-gray-900">Agente de IA para Clientes</h3>
+                  </div>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Escolha qual agente de IA will atender seus clientes na página de agendamento.
+                  </p>
+                  <select
+                    className="w-full p-2 border rounded-md"
+                    value={defaultAgentId || ''}
+                    onChange={e => setDefaultAgentId(e.target.value ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">Nenhum agente selecionado</option>
+                    {agents.map((agent: any) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name} ({agent.agent_type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="border-t border-gray-200 pt-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Globe className="w-5 h-5 text-blue-600" />
@@ -921,6 +1002,110 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
           </div>
         </div>
       </main>
+
+      {/* Modal de Edição de Personalidade */}
+      {editingPersonality && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold">Editar Personalidade do Agente</h2>
+              <button onClick={() => setEditingPersonality(false)} className="text-gray-500 hover:text-gray-700">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Tom da voz */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tom da Voz</label>
+                <select
+                  value={personalityForm.tone}
+                  onChange={(e) => setPersonalityForm({ ...personalityForm, tone: e.target.value })}
+                  className="w-full p-2 border rounded-lg"
+                >
+                  <option value="formal">Formal</option>
+                  <option value="informal">Informal</option>
+                  <option value="amigavel">Amigável</option>
+                  <option value="professional">Profissional</option>
+                </select>
+              </div>
+
+              {/* Vocabulário */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Vocabulário (separado por vírgula)</label>
+                <input
+                  type="text"
+                  value={personalityForm.vocabulary}
+                  onChange={(e) => setPersonalityForm({ ...personalityForm, vocabulary: e.target.value })}
+                  placeholder="ex: agendamento, consulta, profissional"
+                  className="w-full p-2 border rounded-lg"
+                />
+              </div>
+
+              {/* Saudação */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Saudação Inicial</label>
+                <textarea
+                  value={personalityForm.greeting}
+                  onChange={(e) => setPersonalityForm({ ...personalityForm, greeting: e.target.value })}
+                  placeholder="Olá! Como posso ajudar você hoje?"
+                  className="w-full p-2 border rounded-lg h-20"
+                />
+              </div>
+
+              {/* Despedida */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Despedida</label>
+                <textarea
+                  value={personalityForm.closing}
+                  onChange={(e) => setPersonalityForm({ ...personalityForm, closing: e.target.value })}
+                  placeholder="Obrigado por entrar em contato! Até logo!"
+                  className="w-full p-2 border rounded-lg h-20"
+                />
+              </div>
+
+              {/* Regras */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Regras (uma por linha)</label>
+                <textarea
+                  value={personalityForm.rules}
+                  onChange={(e) => setPersonalityForm({ ...personalityForm, rules: e.target.value })}
+                  placeholder="Sempre cumprimente o cliente&#10;Nunca revele preços sem confirmar"
+                  className="w-full p-2 border rounded-lg h-24"
+                />
+              </div>
+
+              {/* Proibidos */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Palavras/Temas Proibidos (separado por vírgula)</label>
+                <input
+                  type="text"
+                  value={personalityForm.forbidden}
+                  onChange={(e) => setPersonalityForm({ ...personalityForm, forbidden: e.target.value })}
+                  placeholder="ex: política, religião, concurso"
+                  className="w-full p-2 border rounded-lg"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setEditingPersonality(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => selectedAgent && savePersonality(selectedAgent.id)}
+                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                Salvar Personalidade
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

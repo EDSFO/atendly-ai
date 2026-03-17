@@ -12,11 +12,14 @@ import { Loader2 } from 'lucide-react';
 
 export default function App() {
   // Simple routing logic for MVP
-  // / -> Landing (Demo Selector)
+  // / -> Login Page
+  // /select-company -> Company Selector (for admin to add more)
   // /:slug -> Booking Page
   // /:slug/admin -> Admin Dashboard
-  
+
   const [path, setPath] = useState(window.location.pathname);
+  // Login state - empresa selecionada pelo usuário
+  const [loggedInTenant, setLoggedInTenant] = useState<any>(null);
 
   useEffect(() => {
     const handlePopState = () => setPath(window.location.pathname);
@@ -29,24 +32,43 @@ export default function App() {
     setPath(newPath);
   };
 
+  const handleLogin = (tenant: any) => {
+    setLoggedInTenant(tenant);
+    // Redirecionar para página da empresa ou admin
+    navigate(`/${tenant.slug}/admin`);
+  };
+
+  const handleLogout = () => {
+    setLoggedInTenant(null);
+    navigate('/');
+  };
+
+  // Se não está logado, mostrar tela de login
   if (path === '/') {
-    return <LandingPage onNavigate={navigate} />;
+    return <LoginPage onLogin={handleLogin} />;
   }
 
   if (path === '/new-company') {
     return <CreateCompany onNavigate={navigate} />;
   }
 
+  // Se está na página inicial após login, mostrar dashboard da empresa logada
+  if (path === '/home' && loggedInTenant) {
+    return <TenantApp tenant={loggedInTenant} isAdmin={true} onNavigate={navigate} onLogout={handleLogout} />;
+  }
+
   const parts = path.split('/').filter(Boolean);
   const slug = parts[0];
   const isAdmin = parts[1] === 'admin';
 
-  return <TenantApp slug={slug} isAdmin={isAdmin} onNavigate={navigate} />;
+  // Passar o tenant logado para o TenantApp
+  return <TenantApp slug={slug} isAdmin={isAdmin} onNavigate={navigate} onLogout={handleLogout} loggedInTenant={loggedInTenant} />;
 }
 
-function LandingPage({ onNavigate }: { onNavigate: (p: string) => void }) {
+function LoginPage({ onLogin }: { onLogin: (tenant: any) => void }) {
   const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedTenant, setSelectedTenant] = useState<any>(null);
 
   useEffect(() => {
     fetch('/api/tenants')
@@ -56,21 +78,18 @@ function LandingPage({ onNavigate }: { onNavigate: (p: string) => void }) {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleLogin = () => {
+    if (selectedTenant) {
+      onLogin(selectedTenant);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-      <div className="max-w-4xl w-full text-center space-y-8">
-        <div className="space-y-2">
+      <div className="max-w-md w-full space-y-8">
+        <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold text-gray-900 tracking-tight">Atendly AI</h1>
-          <p className="text-xl text-gray-600">Plataforma de agendamento inteligente para seu negócio.</p>
-        </div>
-
-        <div className="flex justify-end">
-          <button 
-            onClick={() => onNavigate('/new-company')} 
-            className="text-sm font-medium text-white bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors"
-          >
-            + Criar Nova Empresa
-          </button>
+          <p className="text-xl text-gray-600">Selecione sua empresa para continuar</p>
         </div>
 
         {loading ? (
@@ -78,37 +97,42 @@ function LandingPage({ onNavigate }: { onNavigate: (p: string) => void }) {
             <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {tenants.map(tenant => (
-              <div 
-                key={tenant.id}
-                className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all text-left flex flex-col h-full"
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Empresa</label>
+              <select
+                value={selectedTenant?.id || ''}
+                onChange={(e) => {
+                  const tenant = tenants.find(t => t.id === parseInt(e.target.value));
+                  setSelectedTenant(tenant);
+                }}
+                className="w-full p-3 border rounded-lg bg-gray-50"
               >
-                <div 
-                  className="w-12 h-12 rounded-lg mb-4 flex items-center justify-center text-white font-bold text-xl"
-                  style={{ backgroundColor: tenant.theme_color || '#000' }}
-                >
-                  {tenant.name.charAt(0).toUpperCase()}
-                </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">{tenant.name}</h3>
-                <p className="text-gray-500 text-sm mb-4 flex-1">/{tenant.slug}</p>
-                
-                <div className="flex gap-2 mt-auto pt-4 border-t border-gray-100">
-                  <button 
-                    onClick={() => onNavigate(`/${tenant.slug}`)}
-                    className="flex-1 text-center text-sm font-medium text-blue-600 hover:bg-blue-50 py-2 rounded-md transition-colors"
-                  >
-                    Agendar
-                  </button>
-                  <button 
-                    onClick={() => onNavigate(`/${tenant.slug}/admin`)}
-                    className="flex-1 text-center text-sm font-medium text-gray-600 hover:bg-gray-50 py-2 rounded-md transition-colors"
-                  >
-                    Admin
-                  </button>
-                </div>
-              </div>
-            ))}
+                <option value="">Selecione uma empresa...</option>
+                {tenants.map(tenant => (
+                  <option key={tenant.id} value={tenant.id}>
+                    {tenant.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={handleLogin}
+              disabled={!selectedTenant}
+              className="w-full bg-black text-white py-3 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Entrar
+            </button>
+
+            <div className="text-center">
+              <button
+                onClick={() => window.location.href = '/new-company'}
+                className="text-sm text-gray-500 hover:text-gray-900"
+              >
+                Não encontrou? Criar nova empresa
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -201,11 +225,25 @@ function CreateCompany({ onNavigate }: { onNavigate: (p: string) => void }) {
   );
 }
 
-function TenantApp({ slug, isAdmin, onNavigate }: { slug: string, isAdmin: boolean, onNavigate: (p: string) => void }) {
-  const { tenant, loading } = useTenant(slug);
+function TenantApp({ slug, isAdmin, onNavigate, onLogout, loggedInTenant }: {
+  slug?: string;
+  isAdmin: boolean;
+  onNavigate: (p: string) => void;
+  onLogout?: () => void;
+  tenant?: any;
+  loggedInTenant?: any;
+}) {
+  // Se recebeu tenant direto (da página /home), usar ele diretamente
+  const directTenant = loggedInTenant;
+
+  // Caso contrário, buscar pelo slug
+  const { tenant: fetchedTenant, loading } = useTenant(slug || directTenant?.slug);
+
+  const tenant = directTenant || fetchedTenant;
   const { services, professionals, appointments, refreshAppointments } = useTenantData(tenant?.id);
 
-  if (loading) {
+  // Loading state
+  if (loading && !tenant) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
@@ -223,21 +261,21 @@ function TenantApp({ slug, isAdmin, onNavigate }: { slug: string, isAdmin: boole
   }
 
   if (isAdmin) {
-    return <AdminDashboard tenant={tenant} appointments={appointments} />;
+    return <AdminDashboard tenant={tenant} appointments={appointments} onLogout={onLogout} />;
   }
 
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4">
-      <BookingFlow 
-        tenant={tenant} 
-        services={services} 
-        professionals={professionals} 
+      <BookingFlow
+        tenant={tenant}
+        services={services}
+        professionals={professionals}
         onSuccess={refreshAppointments}
       />
       <ChatWidget tenant={tenant} />
       <div className="text-center mt-8">
-        <button onClick={() => onNavigate('/')} className="text-sm text-gray-500 hover:text-gray-900">
-          &larr; Voltar para demos
+        <button onClick={() => onNavigate('/home')} className="text-sm text-gray-500 hover:text-gray-900">
+          &larr; Voltar para dashboard
         </button>
       </div>
     </div>

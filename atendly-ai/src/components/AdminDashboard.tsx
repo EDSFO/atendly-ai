@@ -5,9 +5,10 @@ import { Calendar, Users, DollarSign, Clock, Settings, Plus, Trash2, Save, FileT
 interface AdminDashboardProps {
   tenant: Tenant;
   appointments: Appointment[];
+  onLogout?: () => void;
 }
 
-export default function AdminDashboard({ tenant: initialTenant, appointments }: AdminDashboardProps) {
+export default function AdminDashboard({ tenant: initialTenant, appointments, onLogout }: AdminDashboardProps) {
   const [tenant, setTenant] = useState(initialTenant);
   const [activeTab, setActiveTab] = useState<'appointments' | 'services' | 'professionals' | 'settings' | 'whatsapp' | 'agents'>('appointments');
 
@@ -252,6 +253,14 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
           </h1>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-500">Olá, Gestor</span>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="text-sm text-red-600 hover:text-red-700 px-3 py-1 rounded border border-red-200 hover:bg-red-50"
+              >
+                Sair
+              </button>
+            )}
             <div className="w-8 h-8 bg-gray-200 rounded-full" />
           </div>
         </div>

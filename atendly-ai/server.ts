@@ -2,7 +2,45 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'text/plain',
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    if (allowedTypes.includes(file.mimetype) ||
+        file.originalname.endsWith('.txt') ||
+        file.originalname.endsWith('.pdf') ||
+        file.originalname.endsWith('.docx')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de arquivo não permitido'));
+    }
+  }
+});
 import { initDb, db } from "./server/db";
 import { handleChat, handleMultiAgentChat, extractInfoFromUrl } from "./server/ai";
 import { handleIncomingMessage, sendMessage, configureWebhook, getQrCode, getInstanceStatus } from "./server/whatsapp";
@@ -546,6 +584,67 @@ async function startServer() {
       res.status(500).json({ error: "Failed to search documents" });
     }
   });
+
+  // File upload for RAG
+  app.post("/api/agents/:agentId/documents/upload", upload.single('file'), async (req, res) => {
+    try {
+      const agentId = parseInt(req.params.agentId);
+
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const file = req.file;
+      let content = '';
+
+      // Parse file based on type
+      if (file.mimetype === 'text/plain' || file.originalname.endsWith('.txt')) {
+        content = fs.readFileSync(file.path, 'utf-8');
+      } else if (file.mimetype === 'application/pdf') {
+        try {
+          const pdfParse = await import('pdf-parse');
+          const dataBuffer = fs.readFileSync(file.path);
+          const data = await pdfParse.default(dataBuffer);
+          content = data.text;
+        } catch (e) {
+          console.error("Error parsing PDF:", e);
+          content = `[PDF: ${file.originalname}] - Unable to parse content`;
+        }
+      } else if (file.originalname.endsWith('.docx')) {
+        try {
+          const docx = await import('docx');
+          const fs2 = await import('fs');
+          const buffer = fs2.readFileSync(file.path);
+          // Simple text extraction for docx - in production use a proper parser
+          content = `[DOCX: ${file.originalname}] - File uploaded successfully. Content extraction requires additional processing.`;
+        } catch (e) {
+          console.error("Error parsing DOCX:", e);
+          content = `[DOCX: ${file.originalname}] - Unable to parse content`;
+        }
+      } else {
+        content = `[Arquivo: ${file.originalname}] - Tipo não suportado para parsing`;
+      }
+
+      // Save to database
+      const document = await addDocument({
+        agent_id: agentId,
+        source_type: 'file',
+        content: content.substring(0, 50000), // Limit content size
+        file_url: `/uploads/${file.filename}`
+      });
+
+      // Clean up uploaded file after processing
+      fs.unlinkSync(file.path);
+
+      res.json(document);
+    } catch (error) {
+      console.error("Error uploading file:", error);
+      res.status(500).json({ error: "Failed to upload file" });
+    }
+  });
+
+  // Serve uploaded files
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

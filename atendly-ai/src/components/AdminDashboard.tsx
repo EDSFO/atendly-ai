@@ -491,6 +491,39 @@ export default function AdminDashboard({ tenant: initialTenant, appointments }: 
                             <Globe className="w-4 h-4" />
                             Escanear Website
                           </button>
+                          <label className="flex items-center gap-2 px-3 py-2 text-sm bg-white border rounded hover:bg-gray-50 cursor-pointer">
+                            <Upload className="w-4 h-4" />
+                            Upload Arquivo
+                            <input
+                              type="file"
+                              accept=".txt,.pdf,.docx"
+                              className="hidden"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+
+                                const formData = new FormData();
+                                formData.append('file', file);
+
+                                try {
+                                  const res = await fetch(`/api/agents/${selectedAgent.id}/documents/upload`, {
+                                    method: 'POST',
+                                    body: formData
+                                  });
+                                  if (res.ok) {
+                                    const doc = await res.json();
+                                    setAgentDocuments([...agentDocuments, doc]);
+                                    alert('Arquivo上传ado com sucesso!');
+                                  } else {
+                                    alert('Erro ao fazer upload do arquivo');
+                                  }
+                                } catch (err) {
+                                  alert('Erro ao fazer upload');
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
                         </div>
                       </div>
                     </div>

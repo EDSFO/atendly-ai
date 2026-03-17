@@ -5,7 +5,6 @@
 
 import { useState, useEffect, FormEvent } from 'react';
 import { useTenant, useTenantData } from './hooks/useAtendly';
-import BookingFlow from './components/BookingFlow';
 import AdminDashboard from './components/AdminDashboard';
 import ChatWidget from './components/ChatWidget';
 import { Loader2 } from 'lucide-react';
@@ -59,10 +58,14 @@ export default function App() {
 
   const parts = path.split('/').filter(Boolean);
   const slug = parts[0];
-  const isAdmin = parts[1] === 'admin';
 
-  // Passar o tenant logado para o TenantApp
-  return <TenantApp slug={slug} isAdmin={isAdmin} onNavigate={navigate} onLogout={handleLogout} loggedInTenant={loggedInTenant} />;
+  // Se não tem slug, volta para login
+  if (!slug) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
+  // Qualquer URL leva para o chat da empresa (não existe página pública)
+  return <TenantApp slug={slug} onNavigate={navigate} onLogout={handleLogout} />;
 }
 
 function LoginPage({ onLogin }: { onLogin: (tenant: any) => void }) {
@@ -260,24 +263,17 @@ function TenantApp({ slug, isAdmin, onNavigate, onLogout, loggedInTenant }: {
     );
   }
 
+  // Se tem /admin na URL, mostrar dashboard
+  const isAdmin = window.location.pathname.includes('/admin');
+
   if (isAdmin) {
     return <AdminDashboard tenant={tenant} appointments={appointments} onLogout={onLogout} />;
   }
 
+  // Página principal = apenas Chat (via chat ou WhatsApp)
   return (
-    <div className="min-h-screen bg-gray-100 py-12 px-4">
-      <BookingFlow
-        tenant={tenant}
-        services={services}
-        professionals={professionals}
-        onSuccess={refreshAppointments}
-      />
+    <div className="min-h-screen bg-gray-100">
       <ChatWidget tenant={tenant} />
-      <div className="text-center mt-8">
-        <button onClick={() => onNavigate('/home')} className="text-sm text-gray-500 hover:text-gray-900">
-          &larr; Voltar para dashboard
-        </button>
-      </div>
     </div>
   );
 }

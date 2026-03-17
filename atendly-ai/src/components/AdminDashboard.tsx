@@ -1,12 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Tenant, Appointment, Service, Professional } from '../types';
-import { Calendar, Users, Settings, Plus, Trash2, FileText, Globe, Loader2, X, Search, Edit } from 'lucide-react';
-
-interface AdminDashboardProps {
-  tenant: Tenant;
-  appointments: Appointment[];
-  onLogout?: () => void;
-}
+import { Tenant, Appointment } from '../types';
+import { Settings, Plus, Trash2, Loader2, X, Search, Edit } from 'lucide-react';
 
 // Material Symbols Icons Components
 const MaterialIcon = ({ icon, filled = false, className = '' }: { icon: string; filled?: boolean; className?: string }) => (
@@ -31,10 +25,17 @@ const Bolt = () => <MaterialIcon icon="bolt" className="text-[#F97316]" />;
 const Add = () => <MaterialIcon icon="add" className="text-4xl" />;
 const EditIcon = () => <MaterialIcon icon="edit" />;
 const DeleteIcon = () => <MaterialIcon icon="delete" />;
+const Globe = () => <MaterialIcon icon="language" />;
+
+interface AdminDashboardProps {
+  tenant: Tenant;
+  appointments: Appointment[];
+  onLogout?: () => void;
+}
 
 export default function AdminDashboard({ tenant: initialTenant, appointments, onLogout }: AdminDashboardProps) {
   const [tenant, setTenant] = useState(initialTenant);
-  const [activeTab, setActiveTab] = useState<'appointments' | 'services' | 'professionals' | 'settings' | 'whatsapp' | 'agents'>('agents');
+  const [activeTab, setActiveTab] = useState<'agents' | 'whatsapp' | 'settings'>('agents');
 
   // Agents state
   const [agents, setAgents] = useState<any[]>([]);
@@ -60,13 +61,20 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
     forbidden: ''
   });
 
+  // Estado para edição de configurações do agente
+  const [editingAgentConfig, setEditingAgentConfig] = useState(false);
+  const [agentConfigForm, setAgentConfigForm] = useState({
+    name: '',
+    description: '',
+    system_prompt: '',
+    services: '',
+    professionals: '',
+    business_info: ''
+  });
+
   useEffect(() => {
     setTenant(initialTenant);
   }, [initialTenant]);
-
-  // Local state for lists
-  const [services, setServices] = useState<Service[]>([]);
-  const [professionals, setProfessionals] = useState<Professional[]>([]);
 
   // WhatsApp Config State
   const [whatsappConfig, setWhatsappConfig] = useState({
@@ -79,21 +87,15 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
   const [whatsappStatus, setWhatsappStatus] = useState<string | null>(null);
   const [isLoadingQr, setIsLoadingQr] = useState(false);
 
-  // Form states
-  const [newService, setNewService] = useState({ name: '', price: '', duration: '' });
-  const [newProfessional, setNewProfessional] = useState({ name: '', specialty: '' });
+  // Settings State
   const [aiContext, setAiContext] = useState(tenant.ai_context || '');
   const [defaultAgentId, setDefaultAgentId] = useState<number | null>(tenant.default_agent_id || null);
   const [isSaving, setIsSaving] = useState(false);
-
-  // Website Scan State
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [isScanning, setIsScanning] = useState(false);
 
   // Fetch data on mount
   useEffect(() => {
-    fetch(`/api/tenants/${tenant.id}/services`).then(r => r.json()).then(setServices);
-    fetch(`/api/tenants/${tenant.id}/professionals`).then(r => r.json()).then(setProfessionals);
     fetch(`/api/tenants/${tenant.id}/agents`).then(r => r.json()).then(setAgents);
 
     fetch(`/api/whatsapp/status/${tenant.id}`).then(r => {
@@ -142,6 +144,25 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
       fetch(`/api/tenants/${tenant.id}/agents`).then(r => r.json()).then(setAgents);
     } catch (error) {
       console.error('Error saving personality:', error);
+    }
+  };
+
+  const saveAgentConfig = async (agentId: number) => {
+    try {
+      await fetch(`/api/agents/${agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: agentConfigForm.name,
+          description: agentConfigForm.description,
+          system_prompt: agentConfigForm.system_prompt
+        })
+      });
+
+      setEditingAgentConfig(false);
+      fetch(`/api/tenants/${tenant.id}/agents`).then(r => r.json()).then(setAgents);
+    } catch (error) {
+      console.error('Error saving agent config:', error);
     }
   };
 
@@ -208,71 +229,14 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
     alert('Configurações salvas!');
   };
 
-  const handleAddService = async () => {
-    if (!newService.name || !newService.price) return;
-    const res = await fetch('/api/services', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tenant_id: tenant.id,
-        name: newService.name,
-        price: parseFloat(newService.price),
-        duration_minutes: parseInt(newService.duration) || 30
-      })
-    });
-    if (res.ok) {
-      fetch(`/api/tenants/${tenant.id}/services`).then(r => r.json()).then(setServices);
-      setNewService({ name: '', price: '', duration: '' });
-    }
-  };
-
-  const handleDeleteService = async (id: number) => {
-    if (!confirm('Tem certeza?')) return;
-    await fetch(`/api/services/${id}`, { method: 'DELETE' });
-    setServices(s => s.filter(i => i.id !== id));
-  };
-
-  const handleAddProfessional = async () => {
-    if (!newProfessional.name) return;
-    const res = await fetch('/api/professionals', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tenant_id: tenant.id,
-        name: newProfessional.name,
-        specialty: newProfessional.specialty
-      })
-    });
-    if (res.ok) {
-      fetch(`/api/tenants/${tenant.id}/professionals`).then(r => r.json()).then(setProfessionals);
-      setNewProfessional({ name: '', specialty: '' });
-    }
-  };
-
-  const handleDeleteProfessional = async (id: number) => {
-    if (!confirm('Tem certeza?')) return;
-    await fetch(`/api/professionals/${id}`, { method: 'DELETE' });
-    setProfessionals(p => p.filter(i => i.id !== id));
-  };
-
-  const stats = {
-    totalAppointments: appointments.length,
-    todayAppointments: appointments.filter(a => a.start_time.startsWith(new Date().toISOString().split('T')[0])).length,
-    revenue: appointments.reduce((acc, curr) => acc + 45, 0),
-  };
-
-  const tabs = [
+  // Navigation tabs
+  const mainTabs = [
     { key: 'home', label: 'Início', icon: Home },
     { key: 'agents', label: 'Agentes', icon: Robot },
-    { key: 'appointments', label: 'Agenda', icon: Calendar },
-    { key: 'services', label: 'Serviços', icon: FileText },
-    { key: 'professionals', label: 'Profissionais', icon: Users },
-    { key: 'whatsapp', label: 'WhatsApp', icon: Globe },
   ];
 
   const adminTabs = [
-    { key: 'admin_agents', label: 'Agentes Admin', icon: Shield },
-    { key: 'users', label: 'Usuários', icon: Group },
+    { key: 'whatsapp', label: 'WhatsApp', icon: Globe },
     { key: 'settings', label: 'Configurações', icon: SettingsIcon },
   ];
 
@@ -297,7 +261,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
 
           {/* Main Nav */}
           <nav className="flex flex-col gap-1">
-            {tabs.map(tab => (
+            {mainTabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => tab.key === 'agents' && setActiveTab('agents')}
@@ -320,7 +284,12 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
             {adminTabs.map(tab => (
               <button
                 key={tab.key}
-                className="flex items-center gap-3 px-4 py-3 text-neutral-500 hover:text-white transition-colors uppercase text-[10px] font-mono tracking-widest"
+                onClick={() => setActiveTab(tab.key as any)}
+                className={`flex items-center gap-3 px-4 py-3 transition-colors uppercase text-[10px] font-mono tracking-widest ${
+                  activeTab === tab.key
+                    ? 'bg-white/5 border-l-2 border-[#F97316] text-white'
+                    : 'text-neutral-500 hover:text-white'
+                }`}
               >
                 <tab.icon className="text-sm" />
                 <span>{tab.label}</span>
@@ -337,7 +306,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
             </div>
             <div className="flex flex-col">
               <p className="text-[11px] font-bold text-white uppercase tracking-wider leading-none">Admin Profile</p>
-              <p className="text-[10px] text-neutral-500 font-mono mt-1">admin@atendly.ai</p>
+              <p className="text-[10px] text-neutral-500 font-mono mt-1">{tenant.name}</p>
             </div>
           </div>
         </div>
@@ -350,7 +319,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
           <div className="flex items-center gap-3">
             <div className="w-1.5 h-1.5 bg-[#F97316]"></div>
             <h2 className="text-white text-xs font-mono uppercase tracking-[0.2em]">
-              Dashboard / {activeTab === 'agents' ? 'Agentes' : activeTab}
+              Dashboard / {activeTab === 'agents' ? 'Agentes' : activeTab === 'whatsapp' ? 'WhatsApp' : 'Configurações'}
             </h2>
           </div>
           <div className="flex items-center gap-6">
@@ -379,12 +348,14 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
           <div className="mb-12 relative">
             <div className="beam-border-v h-20 -left-6 top-0"></div>
             <h1 className="text-white text-5xl lg:text-7xl font-medium uppercase tracking-tighter mb-4 leading-none">
-              {activeTab === 'agents' ? 'Agentes' : 'Dashboard'} <span className="text-neutral-700">de IA</span>
+              {activeTab === 'agents' ? 'Agentes' : activeTab === 'whatsapp' ? 'WhatsApp' : 'Configurações'} <span className="text-neutral-700">de IA</span>
             </h1>
             <p className="text-neutral-400 text-lg max-w-2xl leading-relaxed font-light">
               {activeTab === 'agents'
                 ? 'Automatize processos complexos com inteligência artificial generativa de ponta em um ambiente modular.'
-                : 'Gerencie suas configurações e dados'}
+                : activeTab === 'whatsapp'
+                ? 'Conecte o WhatsApp para receber e enviar mensagens automaticamente.'
+                : 'Gerencie as configurações gerais do seu assistente virtual.'}
             </p>
           </div>
 
@@ -403,7 +374,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
               {/* Agent Templates Modal */}
               {isCreatingAgent && (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-                  <div className="bg-[#0A0A0A] border border-white/10 p-8 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
+                  <div className="bg-[#0A0A0A] border border-white/10 p-8 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-6">
                       <h3 className="text-white text-lg font-medium uppercase tracking-tight">Criar Novo Agente</h3>
                       <button onClick={() => setIsCreatingAgent(false)} className="text-neutral-500 hover:text-white transition-colors">
@@ -412,6 +383,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                     </div>
 
                     <div className="space-y-6">
+                      {/* Template Selection */}
                       <div>
                         <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-3">Template</label>
                         <div className="grid grid-cols-2 gap-3">
@@ -432,13 +404,36 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                         </div>
                       </div>
 
+                      {/* Agent Name */}
                       <div>
-                        <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-3">Nome Personalizado</label>
+                        <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-3">Nome do Agente</label>
                         <input
                           className="w-full p-4 input-dark text-white text-sm"
-                          placeholder="Deixe vazio para usar o nome do template"
+                          placeholder="Ex: Atendente João"
                           value={newAgentForm.custom_name}
                           onChange={e => setNewAgentForm({ ...newAgentForm, custom_name: e.target.value })}
+                        />
+                      </div>
+
+                      {/* Description */}
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-3">Descrição</label>
+                        <input
+                          className="w-full p-4 input-dark text-white text-sm"
+                          placeholder="Ex: Agente de atendimento para salão de beleza"
+                          value={newAgentForm.custom_description}
+                          onChange={e => setNewAgentForm({ ...newAgentForm, custom_description: e.target.value })}
+                        />
+                      </div>
+
+                      {/* Services */}
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-3">Serviços Oferecidos</label>
+                        <textarea
+                          className="w-full p-4 input-dark text-white text-sm h-24 resize-none"
+                          placeholder="Ex:&#10;Corte de cabelo - R$ 50 - 30min&#10;Barba - R$ 30 - 20min&#10;Coloração - R$ 120 - 90min"
+                          value={newAgentForm.custom_prompt}
+                          onChange={e => setNewAgentForm({ ...newAgentForm, custom_prompt: e.target.value })}
                         />
                       </div>
 
@@ -451,7 +446,9 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                               body: JSON.stringify({
                                 tenant_id: tenant.id,
                                 template_key: newAgentForm.template_key,
-                                custom_name: newAgentForm.custom_name || undefined
+                                custom_name: newAgentForm.custom_name || undefined,
+                                custom_description: newAgentForm.custom_description || undefined,
+                                custom_prompt: newAgentForm.custom_prompt || undefined
                               })
                             });
                             if (res.ok) {
@@ -492,9 +489,7 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                       onClick={() => setSelectedAgent(agent)}
                       className="bg-[#0A0A0A] border border-white/10 floating-card overflow-hidden cursor-pointer group"
                     >
-                      {/* Placeholder Image - grayscale */}
-                      <div className="h-44 bg-cover bg-center grayscale-hover"
-                           style={{ backgroundColor: '#1a1a1a' }}></div>
+                      <div className="h-44 bg-cover bg-center grayscale-hover" style={{ backgroundColor: '#1a1a1a' }}></div>
                       <div className="p-6">
                         <span className="text-[9px] font-mono text-[#F97316] uppercase tracking-[0.2em] block mb-2">
                           {agent.agent_type || 'Atendimento'}
@@ -560,6 +555,23 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                       </button>
                       <button
                         onClick={() => {
+                          setAgentConfigForm({
+                            name: selectedAgent.name || '',
+                            description: selectedAgent.description || '',
+                            system_prompt: selectedAgent.system_prompt || '',
+                            services: '',
+                            professionals: '',
+                            business_info: ''
+                          });
+                          setEditingAgentConfig(true);
+                        }}
+                        className="px-4 py-2 border border-white/10 text-neutral-400 hover:text-white hover:border-white/30 text-[10px] font-mono uppercase tracking-widest transition-all"
+                      >
+                        <EditIcon className="w-3 h-3 inline mr-2" />
+                        Configurar
+                      </button>
+                      <button
+                        onClick={() => {
                           const existingPersonality = selectedAgent.personality ? JSON.parse(selectedAgent.personality) : null;
                           setPersonalityForm({
                             tone: existingPersonality?.tone || 'professional',
@@ -573,7 +585,6 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                         }}
                         className="px-4 py-2 border border-white/10 text-neutral-400 hover:text-white hover:border-white/30 text-[10px] font-mono uppercase tracking-widest transition-all"
                       >
-                        <EditIcon className="w-3 h-3 inline mr-2" />
                         Personalidade
                       </button>
                       <button
@@ -592,9 +603,60 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
                     </div>
                   </div>
 
+                  {/* Agent Config Editor */}
+                  {editingAgentConfig && (
+                    <div className="bg-[#0A0A0A] border border-white/10 p-6 space-y-4">
+                      <h4 className="text-white text-sm font-mono uppercase tracking-widest mb-4">Configurar Agente</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Nome</label>
+                          <input
+                            className="w-full p-3 input-dark text-sm"
+                            value={agentConfigForm.name}
+                            onChange={e => setAgentConfigForm({ ...agentConfigForm, name: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Descrição</label>
+                          <input
+                            className="w-full p-3 input-dark text-sm"
+                            value={agentConfigForm.description}
+                            onChange={e => setAgentConfigForm({ ...agentConfigForm, description: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">System Prompt</label>
+                          <textarea
+                            className="w-full p-3 input-dark text-sm h-32 resize-none"
+                            value={agentConfigForm.system_prompt}
+                            onChange={e => setAgentConfigForm({ ...agentConfigForm, system_prompt: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-3 mt-4">
+                        <button
+                          onClick={() => saveAgentConfig(selectedAgent.id)}
+                          className="btn-beam px-6 py-3 text-white text-[10px] font-bold uppercase tracking-widest"
+                        >
+                          <div className="btn-inner"></div>
+                          <span className="relative z-10 flex items-center gap-2">
+                            <Bolt />
+                            Salvar Configuração
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => setEditingAgentConfig(false)}
+                          className="px-6 py-3 border border-white/10 text-neutral-400 hover:text-white text-[10px] font-mono uppercase tracking-widest transition-all"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Personality Editor */}
                   {editingPersonality && (
-                    <div className="bg-[#0A0A0A] border border-white/10 p-6 space-y-4">
+                    <div className="bg-[#0A0A0A] border border-white/10 p-6 space-y-4 mt-4">
                       <h4 className="text-white text-sm font-mono uppercase tracking-widest mb-4">Configurar Personalidade</h4>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -663,22 +725,178 @@ export default function AdminDashboard({ tenant: initialTenant, appointments, on
             </div>
           )}
 
-          {/* OTHER TABS - Simplified for now */}
-          {activeTab !== 'agents' && (
-            <div className="text-center py-20">
-              <p className="text-neutral-500 text-sm font-mono uppercase tracking-widest">
-                Seção em desenvolvimento: {activeTab}
-              </p>
-              <p className="text-neutral-600 text-xs mt-2">
-                Retornando para Agentes...
-              </p>
-              <button
-                onClick={() => setActiveTab('agents')}
-                className="mt-4 btn-beam px-6 py-3 text-white text-[10px] font-bold uppercase tracking-widest"
-              >
-                <div className="btn-inner"></div>
-                <span className="relative z-10">Voltar aos Agentes</span>
-              </button>
+          {/* WHATSAPP TAB */}
+          {activeTab === 'whatsapp' && (
+            <div className="space-y-6">
+              <div className="bg-[#0A0A0A] border border-white/10 p-6">
+                <h3 className="text-white text-sm font-mono uppercase tracking-widest mb-4">Configuração WhatsApp</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Instance Key</label>
+                    <input
+                      className="w-full p-3 input-dark text-sm"
+                      placeholder="Sua instance key"
+                      value={whatsappConfig.instance_key}
+                      onChange={e => setWhatsappConfig({ ...whatsappConfig, instance_key: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Access Token</label>
+                    <input
+                      className="w-full p-3 input-dark text-sm"
+                      placeholder="Seu access token"
+                      value={whatsappConfig.access_token}
+                      onChange={e => setWhatsappConfig({ ...whatsappConfig, access_token: e.target.value })}
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setIsSavingWhatsapp(true);
+                      await fetch('/api/whatsapp/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tenant_id: tenant.id,
+                          instance_key: whatsappConfig.instance_key,
+                          access_token: whatsappConfig.access_token,
+                          webhook_url: `${window.location.origin}/api/whatsapp/webhook/${whatsappConfig.instance_key}`
+                        })
+                      });
+                      setIsSavingWhatsapp(false);
+                      alert('Configuração salva!');
+                    }}
+                    disabled={isSavingWhatsapp}
+                    className="btn-beam px-6 py-3 text-white text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                  >
+                    <div className="btn-inner"></div>
+                    <span className="relative z-10">{isSavingWhatsapp ? 'Salvando...' : 'Salvar Configuração'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* QR Code Section */}
+              <div className="bg-[#0A0A0A] border border-white/10 p-6">
+                <h3 className="text-white text-sm font-mono uppercase tracking-widest mb-4">Conectar WhatsApp</h3>
+                <div className="flex flex-col items-center">
+                  <button
+                    onClick={fetchQrCode}
+                    disabled={isLoadingQr}
+                    className="btn-beam px-6 py-3 text-white text-[10px] font-bold uppercase tracking-widest mb-4 disabled:opacity-50"
+                  >
+                    <div className="btn-inner"></div>
+                    <span className="relative z-10 flex items-center gap-2">
+                      <Bolt />
+                      {isLoadingQr ? 'Carregando...' : 'Gerar QR Code'}
+                    </span>
+                  </button>
+                  {qrCode && (
+                    <div className="bg-white p-4">
+                      <img src={qrCode} alt="QR Code" className="w-48 h-48" />
+                    </div>
+                  )}
+                  {whatsappStatus && (
+                    <p className="text-green-500 text-xs font-mono mt-4 uppercase tracking-widest">
+                      Status: {whatsappStatus}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SETTINGS TAB */}
+          {activeTab === 'settings' && (
+            <div className="space-y-6">
+              <div className="bg-[#0A0A0A] border border-white/10 p-6">
+                <h3 className="text-white text-sm font-mono uppercase tracking-widest mb-4">Configurações Gerais</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Nome da Empresa</label>
+                    <input
+                      className="w-full p-3 input-dark text-sm"
+                      value={tenant.name}
+                      onChange={e => setTenant({ ...tenant, name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Cor do Tema</label>
+                    <div className="flex gap-3">
+                      <input
+                        type="color"
+                        className="w-12 h-12 border border-white/10 bg-transparent"
+                        value={tenant.theme_color || '#F97316'}
+                        onChange={e => setTenant({ ...tenant, theme_color: e.target.value })}
+                      />
+                      <input
+                        className="flex-1 p-3 input-dark text-sm"
+                        value={tenant.theme_color || '#F97316'}
+                        onChange={e => setTenant({ ...tenant, theme_color: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Agente Padrão</label>
+                    <select
+                      className="w-full p-3 input-dark text-sm"
+                      value={defaultAgentId || ''}
+                      onChange={e => setDefaultAgentId(e.target.value ? parseInt(e.target.value) : null)}
+                    >
+                      <option value="" className="bg-[#0A0A0A]">Selecione um agente...</option>
+                      {agents.map(agent => (
+                        <option key={agent.id} value={agent.id} className="bg-[#0A0A0A]">
+                          {agent.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={handleSaveSettings}
+                    disabled={isSaving}
+                    className="btn-beam px-6 py-3 text-white text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                  >
+                    <div className="btn-inner"></div>
+                    <span className="relative z-10">{isSaving ? 'Salvando...' : 'Salvar Configurações'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* AI Context */}
+              <div className="bg-[#0A0A0A] border border-white/10 p-6">
+                <h3 className="text-white text-sm font-mono uppercase tracking-widest mb-4">Contexto da IA</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Informações sobre a Empresa</label>
+                    <textarea
+                      className="w-full p-3 input-dark text-sm h-40 resize-none"
+                      placeholder="Descreva sua empresa, serviços, políticas, etc."
+                      value={aiContext}
+                      onChange={e => setAiContext(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-widest text-neutral-500 mb-2">Extrair de Site</label>
+                    <div className="flex gap-3">
+                      <input
+                        className="flex-1 p-3 input-dark text-sm"
+                        placeholder="https://seudominio.com.br"
+                        value={websiteUrl}
+                        onChange={e => setWebsiteUrl(e.target.value)}
+                      />
+                      <button
+                        onClick={handleScanWebsite}
+                        disabled={isScanning || !websiteUrl}
+                        className="btn-beam px-6 py-3 text-white text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                      >
+                        <div className="btn-inner"></div>
+                        <span className="relative z-10 flex items-center gap-2">
+                          <Globe className="w-3 h-3" />
+                          {isScanning ? 'Escaneando...' : 'Extrair'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

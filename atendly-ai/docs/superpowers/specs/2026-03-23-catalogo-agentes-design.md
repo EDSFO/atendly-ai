@@ -7,7 +7,10 @@ Atualmente, os agentes são criados diretamente pelos tenants (clientes). A prop
 - Clientes ativam agentes do catálogo e personalizam apenas o RAG e ajustes de personalidade
 - Sistema de pagamento por agente (pronto para ativação)
 
-## Arquitetura de Dados
+## Esquema Atual da Tabela `agents`
+
+A tabela `agents` **já existe** com as colunas:
+- `id`, `tenant_id`, `name`, `description`, `system_prompt`, `agent_type`, `personality` (JSONB), `is_global`, `parent_agent_id`, `is_active`, `created_at`
 
 ### Alterações na Tabela `agents`
 
@@ -20,6 +23,8 @@ ALTER TABLE agents ADD COLUMN monthly_price DECIMAL(10,2) DEFAULT 0;
 - `is_catalog`: se true, é um agente disponível no catálogo (criado pelo gestor)
 - `version`: controle de versões para updates
 - `monthly_price`: preço mensal por agente (0 = gratuito)
+
+**Nota:** `personality` é JSONB com estrutura `{ tone, vocabulary, greeting, closing, rules, forbidden }`
 
 ### Nova Tabela `tenant_agents`
 
@@ -63,9 +68,15 @@ CREATE TABLE tenant_agent_subscriptions (
 2. Tenant acessa "Catálogo de Agentes" no seu painel
 3. Vê agentes disponíveis com preview de descrição, tipo e preço
 4. Clica "Ativar" →
-   - Se pagamento ativo: cria subscription com status 'pending'
-   - Se pagamento inativo: cria subscription 'active' e cria `tenant_agent`
-5. Tenant personaliza personalidade + adiciona RAG
+   - Se `PAYMENT_SYSTEM_ACTIVE=true`: cria subscription com status 'pending' (agente fica inacessível até pagamento)
+   - Se `PAYMENT_SYSTEM_ACTIVE=false`: cria subscription 'active' + cria `tenant_agent` imediatamente
+5. **Se pagamento ativo:** gateway de pagamento chama webhook `POST /api/tenant-agents/:id/subscription/activate` → muda status para 'active'
+6. Tenant personaliza personalidade + adiciona RAG
+
+**Comportamento quando assinatura expira/cancela:**
+- `tenant_agent.is_active` é setado para `false`
+- Registro NÃO é deletado (histórico)
+- Tenant é notificado para renovar
 
 ## Personalização Permitida ao Tenant
 
@@ -107,11 +118,13 @@ POST   /api/tenant-agents/:id/documents # Adiciona RAG
 DELETE /api/tenant-agents/:id/documents/:docId # Remove RAG
 ```
 
-### Pagamento (stub)
+### Pagamento (stub - para ativar posteriormente)
 ```
 GET    /api/tenant-agents/:id/subscription # Status da assinatura
-POST   /api/tenant-agents/:id/subscription/activate # Ativar assinatura (stub)
+POST   /api/tenant-agents/:id/subscription/activate # Webhook do gateway de pagamento
 ```
+
+**Stub atual:** apenas muda status para 'active'. Integração real com gateway (Stripe, Pagar.me, etc.) será adicionada quando `PAYMENT_SYSTEM_ACTIVE=true`.
 
 ## Lógica de Verificação de Pagamento
 

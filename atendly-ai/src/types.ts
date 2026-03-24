@@ -5,6 +5,7 @@ export interface Tenant {
   segment: 'beauty' | 'health' | 'general';
   theme_color: string;
   ai_context?: string;
+  default_agent_id?: number;
 }
 
 export interface Service {

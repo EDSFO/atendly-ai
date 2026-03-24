@@ -59,18 +59,31 @@ import {
 } from "./server/agents";
 import {
   getCatalogAgents,
+  getCatalogAgentsWithSubAgents,
   getCatalogAgent,
   createCatalogAgent,
   updateCatalogAgent,
   deleteCatalogAgent,
+  getSubAgents,
+  addSubAgent,
+  updateSubAgent,
+  deleteSubAgent,
   getTenantAgents,
+  getTenantAgentsWithOrchestrator,
   getTenantAgent,
   activateTenantAgent,
   deactivateTenantAgent,
   updateTenantAgentPersonality,
+  updateTenantSubAgentPersonality,
   checkAgentAccess,
   activateSubscription,
-  getSubscription
+  getSubscription,
+  getCatalogSubAgentDocuments,
+  addCatalogSubAgentDocument,
+  deleteCatalogSubAgentDocument,
+  getTenantSubAgentDocuments,
+  addTenantSubAgentDocument,
+  deleteTenantSubAgentDocument
 } from "./server/catalog";
 
 let dbStatus = "unknown";
@@ -566,11 +579,11 @@ async function startServer() {
   // Create catalog agent
   app.post("/api/catalog/agents", async (req, res) => {
     try {
-      const { name, description, system_prompt, agent_type, personality, monthly_price } = req.body;
+      const { name, description, system_prompt, agent_type, personality, monthly_price, is_orchestrator, sub_agents } = req.body;
       if (!name || !system_prompt || !agent_type) {
         return res.status(400).json({ error: "name, system_prompt, and agent_type are required" });
       }
-      const agent = await createCatalogAgent({ name, description, system_prompt, agent_type, personality, monthly_price });
+      const agent = await createCatalogAgent({ name, description, system_prompt, agent_type, personality, monthly_price, is_orchestrator, sub_agents });
       res.json(agent);
     } catch (error) {
       console.error(error);
@@ -606,6 +619,112 @@ async function startServer() {
     }
   });
 
+  // Get catalog agents with sub-agents (orchestrators)
+  app.get("/api/catalog/agents-with-subagents", async (req, res) => {
+    try {
+      const agents = await getCatalogAgentsWithSubAgents();
+      res.json(agents);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to get catalog agents" });
+    }
+  });
+
+  // Get sub-agents of an orchestrator
+  app.get("/api/catalog/agents/:id/sub-agents", async (req, res) => {
+    try {
+      const agentId = parseInt(req.params.id);
+      const subAgents = await getSubAgents(agentId);
+      res.json(subAgents);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to get sub-agents" });
+    }
+  });
+
+  // Add sub-agent to orchestrator
+  app.post("/api/catalog/agents/:id/sub-agents", async (req, res) => {
+    try {
+      const agentId = parseInt(req.params.id);
+      const { name, description, system_prompt, agent_type, personality } = req.body;
+      if (!name || !system_prompt || !agent_type) {
+        return res.status(400).json({ error: "name, system_prompt, and agent_type are required" });
+      }
+      const subAgent = await addSubAgent(agentId, { name, description, system_prompt, agent_type, personality });
+      res.json(subAgent);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to add sub-agent" });
+    }
+  });
+
+  // Update sub-agent
+  app.put("/api/catalog/sub-agents/:id", async (req, res) => {
+    try {
+      const subAgentId = parseInt(req.params.id);
+      const { name, description, system_prompt, personality, agent_order } = req.body;
+      const subAgent = await updateSubAgent(subAgentId, { name, description, system_prompt, personality, agent_order });
+      res.json(subAgent);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to update sub-agent" });
+    }
+  });
+
+  // Delete sub-agent
+  app.delete("/api/catalog/sub-agents/:id", async (req, res) => {
+    try {
+      const subAgentId = parseInt(req.params.id);
+      await deleteSubAgent(subAgentId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to delete sub-agent" });
+    }
+  });
+
+  // ========== CATALOG SUB-AGENT DOCUMENTS API (RAG) ==========
+
+  // Get documents for catalog sub-agent
+  app.get("/api/catalog/sub-agents/:id/documents", async (req, res) => {
+    try {
+      const subAgentId = parseInt(req.params.id);
+      const documents = await getCatalogSubAgentDocuments(subAgentId);
+      res.json(documents);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to get sub-agent documents" });
+    }
+  });
+
+  // Add document to catalog sub-agent
+  app.post("/api/catalog/sub-agents/:id/documents", async (req, res) => {
+    try {
+      const subAgentId = parseInt(req.params.id);
+      const { source_type, content, file_url, website_url } = req.body;
+      if (!source_type) {
+        return res.status(400).json({ error: "source_type is required" });
+      }
+      const document = await addCatalogSubAgentDocument(subAgentId, { source_type, content, file_url, website_url });
+      res.json(document);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to add sub-agent document" });
+    }
+  });
+
+  // Delete document from catalog sub-agent
+  app.delete("/api/catalog/sub-agents/:id/documents/:docId", async (req, res) => {
+    try {
+      const docId = parseInt(req.params.docId);
+      await deleteCatalogSubAgentDocument(docId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to delete sub-agent document" });
+    }
+  });
+
   // ========== TENANT AGENTS API ==========
 
   // Get tenant's activated agents
@@ -613,6 +732,18 @@ async function startServer() {
     try {
       const tenantId = parseInt(req.params.tenantId);
       const agents = await getTenantAgents(tenantId);
+      res.json(agents);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to get tenant agents" });
+    }
+  });
+
+  // Get tenant's activated agents with orchestrator grouping
+  app.get("/api/tenants/:tenantId/agents-with-orchestrator", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const agents = await getTenantAgentsWithOrchestrator(tenantId);
       res.json(agents);
     } catch (error) {
       console.error(error);
@@ -675,6 +806,72 @@ async function startServer() {
     }
   });
 
+  // Update tenant sub-agent personality
+  app.put("/api/tenant-sub-agents/:id/personality", async (req, res) => {
+    try {
+      const subAgentId = parseInt(req.params.id);
+      const { custom_personality } = req.body;
+      if (!custom_personality) {
+        return res.status(400).json({ error: "custom_personality is required" });
+      }
+      const agent = await updateTenantSubAgentPersonality(subAgentId, custom_personality);
+      if (!agent) {
+        return res.status(404).json({ error: "Tenant sub-agent not found" });
+      }
+      res.json(agent);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to update sub-agent personality" });
+    }
+  });
+
+  // ========== TENANT SUB-AGENT DOCUMENTS API (RAG) ==========
+
+  // Get documents for tenant's sub-agent
+  app.get("/api/tenant-sub-agents/:id/documents", async (req, res) => {
+    try {
+      const tenantAgentId = parseInt(req.params.id);
+      const documents = await getTenantSubAgentDocuments(tenantAgentId);
+      res.json(documents);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to get tenant sub-agent documents" });
+    }
+  });
+
+  // Add document to tenant's sub-agent
+  app.post("/api/tenant-sub-agents/:id/documents", async (req, res) => {
+    try {
+      const tenantAgentId = parseInt(req.params.id);
+      const { source_type, content, file_url, website_url } = req.body;
+      if (!source_type) {
+        return res.status(400).json({ error: "source_type is required" });
+      }
+      const document = await addTenantSubAgentDocument(tenantAgentId, { source_type, content, file_url, website_url });
+      res.json(document);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to add tenant sub-agent document" });
+    }
+  });
+
+  // Delete document from tenant's sub-agent
+  app.delete("/api/tenant-sub-agents/:id/documents/:docId", async (req, res) => {
+    try {
+      const tenantAgentId = parseInt(req.params.id);
+      const tenantId = parseInt(req.query.tenant_id as string);
+      const docId = parseInt(req.params.docId);
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenant_id is required" });
+      }
+      await deleteTenantSubAgentDocument(docId, tenantId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to delete tenant sub-agent document" });
+    }
+  });
+
   // Get subscription status
   app.get("/api/tenant-agents/:id/subscription", async (req, res) => {
     try {
@@ -696,18 +893,6 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Failed to activate subscription" });
-    }
-  });
-
-  // Get all agents for a tenant
-  app.get("/api/tenants/:tenantId/agents", async (req, res) => {
-    try {
-      const tenantId = parseInt(req.params.tenantId);
-      const agents = await getAgents(tenantId);
-      res.json(agents);
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Failed to get agents" });
     }
   });
 

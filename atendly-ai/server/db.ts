@@ -189,12 +189,34 @@ export async function initDb() {
 
     // Migration: Add catalog columns to agents
     try {
-      await db.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS is_catalog BOOLEAN DEFAULT false`);
-      await db.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1`);
-      await db.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS monthly_price DECIMAL(10,2) DEFAULT 0`);
-      console.log("Migration: catalog columns added to agents");
-    } catch (err) {
-      console.log("Migration: agents catalog columns may already exist");
+      await db.query(`ALTER TABLE agents ADD COLUMN is_catalog BOOLEAN DEFAULT false`);
+      console.log("Migration: is_catalog column added");
+    } catch (err: any) {
+      if (!err.message.includes('already exists')) console.log("Migration: is_catalog may already exist");
+    }
+    try {
+      await db.query(`ALTER TABLE agents ADD COLUMN version INTEGER DEFAULT 1`);
+      console.log("Migration: version column added");
+    } catch (err: any) {
+      if (!err.message.includes('already exists')) console.log("Migration: version may already exist");
+    }
+    try {
+      await db.query(`ALTER TABLE agents ADD COLUMN monthly_price DECIMAL(10,2) DEFAULT 0`);
+      console.log("Migration: monthly_price column added");
+    } catch (err: any) {
+      if (!err.message.includes('already exists')) console.log("Migration: monthly_price may already exist");
+    }
+    try {
+      await db.query(`ALTER TABLE agents ADD COLUMN is_orchestrator BOOLEAN DEFAULT false`);
+      console.log("Migration: is_orchestrator column added");
+    } catch (err: any) {
+      if (!err.message.includes('already exists')) console.log("Migration: is_orchestrator may already exist");
+    }
+    try {
+      await db.query(`ALTER TABLE agents ADD COLUMN agent_order INTEGER DEFAULT 0`);
+      console.log("Migration: agent_order column added");
+    } catch (err: any) {
+      if (!err.message.includes('already exists')) console.log("Migration: agent_order may already exist");
     }
 
     // tenant_agents - instância de agente do catálogo por tenant
@@ -256,6 +278,14 @@ export async function initDb() {
       console.log("Migration: is_global column added to agent_documents");
     } catch (err) {
       console.log("Migration: agent_documents is_global column may already exist");
+    }
+
+    // Migration: Add tenant_id column for multi-tenant RAG documents
+    try {
+      await db.query(`ALTER TABLE agent_documents ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)`);
+      console.log("Migration: tenant_id column added to agent_documents");
+    } catch (err: any) {
+      if (!err.message.includes('already exists')) console.log("Migration: agent_documents tenant_id may already exist");
     }
 
     // Try to enable pgvector extension (may require superuser)

@@ -37,3 +37,43 @@ export interface Appointment {
   service_name?: string;
   professional_name?: string;
 }
+
+// User (funcionário)
+export interface User {
+  id: number;
+  tenant_id: number;
+  email: string;
+  name: string;
+  role: 'user' | 'manager' | 'admin';
+  is_active: boolean;
+  created_at: string;
+}
+
+// User Agent (agente liberado para usuário)
+export interface UserAgent {
+  id: number;
+  user_id: number;
+  tenant_agent_id: number;
+  is_active: boolean;
+}
+
+// Rich Content Types
+export type RichContentType = 'text' | 'image' | 'card' | 'carousel' | 'link' | 'code' | 'composite';
+
+export interface RichContent {
+  type: RichContentType;
+  content: any;
+  panel?: 'marketing' | 'sales' | 'support' | 'default';
+}
+
+export interface AgentChatResponse {
+  text: string;
+  rich_content?: RichContent;
+  panel_to_open?: string;
+  agent_used?: {
+    id: number;
+    name: string;
+    sub_agent_id?: number;
+    sub_agent_name?: string;
+  };
+}

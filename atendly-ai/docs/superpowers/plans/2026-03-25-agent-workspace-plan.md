@@ -26,6 +26,7 @@ src/
 │   ├── AgentWorkspace.tsx  # Container principal (nova página/route)
 │   ├── CentralPanel.tsx     # Painel central para conteúdo rico
 │   ├── AgentSidebar.tsx    # Lista de agentes disponíveis
+│   ├── AgentChatPanel.tsx  # Painel lateral de chat alternativo
 │   ├── RichContentRenderer.tsx  # Renderizador de conteúdo
 │   │   ├── TextRenderer.tsx
 │   │   ├── ImageRenderer.tsx
@@ -328,6 +329,8 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Adicionar imports**
 
+Adicionar no início do arquivo `server/server.ts` com os outros imports:
+
 ```typescript
 import {
   getUsers,
@@ -342,7 +345,9 @@ import {
 } from "./server/users";
 ```
 
-- [ ] **Step 2: Adicionar rotas após rotas de catalog (aproximadamente linha 600)**
+- [ ] **Step 2: Adicionar rotas de users**
+
+Adicionar após as rotas de catalog sub-agent documents (após a linha `// Delete document from catalog sub-agent` ~linha 620):
 
 ```typescript
 // ========== USERS API (MANAGER) ==========
@@ -475,12 +480,20 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 ### Task 5: Backend - Endpoint de Chat com Rich Content
 
 **Files:**
-- Modify: `server/server.ts` (add new endpoint)
-- Modify: `server/ai.ts` (add handleAgentChat function)
+- Modify: `server/server.ts` (add new endpoint around line 680 after catalog routes)
+- Modify: `server/ai.ts` (add handleAgentChat function after handleMultiAgentChat ~line 565)
 
-- [ ] **Step 1: Adicionar função handleAgentChat em ai.ts**
+- [ ] **Step 1: Adicionar imports necessários no início de ai.ts**
 
-Adicionar após handleMultiAgentChat:
+Adicionar import de getUserAgents:
+```typescript
+// Importar getUserAgents de users.ts (criado na Task 3)
+import { getUserAgents } from './users';
+```
+
+- [ ] **Step 2: Adicionar função handleAgentChat em ai.ts**
+
+Adicionar após handleMultiAgentChat (aproximadamente linha 565):
 
 ```typescript
 // Handle Agent Chat with Rich Content Response
@@ -509,14 +522,23 @@ export async function handleAgentChat(
     sub_agent_name?: string;
   };
 }> {
-  // Get user's agents to find available agents
+  // Get user's agents to find available orchestrator
   const userAgents = await getUserAgents(user_id);
   const orchestrator = userAgents.find((ua: any) => ua.is_orchestrator);
 
   if (!orchestrator) {
-    // Fallback to regular chat
+    // Fallback to regular chat if no orchestrator found
     const response = await handleChat(message, tenant_id, history, agent_id);
     return { text: response };
+  }
+
+  // Get RAG context for the tenant
+  const ragContext = await buildRAGContext(orchestrator.agent_id, tenant_id);
+
+  // Build system prompt with RAG context
+  let systemPrompt = orchestrator.system_prompt || '';
+  if (ragContext) {
+    systemPrompt += `\n\n${ragContext}`;
   }
 
   // Use handleChat to process the message
@@ -538,6 +560,10 @@ export async function handleAgentChat(
   }
 
   // Build rich content based on response and agent type
+  // NOTE: This is a basic implementation. For production, consider:
+  // 1. Using LLM to structure the response into proper format
+  // 2. JSON parsing if the LLM returns structured JSON
+  // 3. Different prompts per agent type for better formatting
   const richContent = options.return_rich_content ? {
     type: contentType,
     content: buildRichContentFromResponse(response, orchestrator.agent_type),
@@ -557,13 +583,37 @@ export async function handleAgentChat(
   };
 }
 
+/**
+ * Build rich content structure from text response.
+ * This is a basic implementation - for production, enhance with LLM-guided formatting.
+ */
 function buildRichContentFromResponse(text: string, agentType: string): any {
-  // Default: wrap text in simple structure
+  // Try to parse as JSON if response looks like JSON
+  try {
+    if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+      const parsed = JSON.parse(text);
+      return parsed;
+    }
+  } catch (e) {
+    // Not JSON, continue with text processing
+  }
+
+  // Default: wrap text in simple structure based on agent type
   if (agentType === 'marketing') {
-    // Parse marketing content into carousel items
+    // Split by double newlines or numbered items to create carousel
+    const items = text.split(/\n\n|\n(?=\d+\.)/).filter(s => s.trim());
     return {
-      items: [
-        { title: "Conteúdo Gerado", caption: text }
+      items: items.slice(0, 5).map((item, idx) => ({
+        title: `Item ${idx + 1}`,
+        caption: item.trim()
+      }))
+    };
+  } else if (agentType === 'sales') {
+    return {
+      title: 'Proposta',
+      description: text,
+      actions: [
+        { label: 'Copiar', type: 'copy', data: text }
       ]
     };
   }
@@ -1395,3 +1445,212 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 | 10 | Frontend: AgentWorkspace | Pending |
 | 11 | Frontend: ChatWidget integration | Pending |
 | 12 | Frontend: Routes | Pending |
+| 13 | Frontend: AgentChatPanel (lateral) | Pending |
+| 14 | Frontend: Tests | Pending |
+
+---
+
+### Task 13: Frontend - AgentChatPanel (Painel Lateral de Chat)
+
+**Files:**
+- Create: `src/components/AgentChatPanel.tsx`
+
+- [ ] **Step 1: Criar AgentChatPanel.tsx**
+
+Painel lateral de chat alternativo ao ChatWidget, integrado com o workspace:
+
+```typescript
+import { useState, useRef, useEffect } from 'react';
+import { X, Send, Loader2 } from 'lucide-react';
+import { UserAgent } from '../types';
+import CentralPanel from './CentralPanel';
+import { RichContent } from '../types';
+
+interface Props {
+  userId: number;
+  tenantId: number;
+  agent: UserAgent;
+  onClose: () => void;
+  isOpen: boolean;
+}
+
+export default function AgentChatPanel({ userId, tenantId, agent, onClose, isOpen }: Props) {
+  const [messages, setMessages] = useState<any[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [panelContent, setPanelContent] = useState<RichContent | null>(null);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (agent) {
+      setMessages([{
+        role: 'model',
+        text: `Olá! Sou o ${agent.agent_name}. Como posso ajudar?`
+      }]);
+    }
+  }, [agent]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMsg = input;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setIsLoading(true);
+
+    try {
+      const res = await fetch('/api/agent/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMsg,
+          tenant_id: tenantId,
+          user_id: userId,
+          agent_id: agent.agent_id,
+          history: messages.map(m => ({ role: m.role, text: m.text })),
+          return_rich_content: true
+        }),
+      });
+
+      const data = await res.json();
+      setMessages(prev => [...prev, { role: 'model', text: data.text }]);
+
+      // If rich content, open central panel
+      if (data.rich_content) {
+        setPanelContent(data.rich_content);
+        setIsPanelOpen(true);
+      }
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'model', text: "Erro ao processar resposta." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div className="fixed right-0 top-0 bottom-0 w-96 bg-[#0A0A0A] border-l border-white/10 z-50 flex flex-col">
+        {/* Header */}
+        <div className="p-4 flex justify-between items-center border-b border-white/5">
+          <div>
+            <h3 className="text-white font-medium">{agent.agent_name}</h3>
+            <p className="text-neutral-500 text-xs uppercase">{agent.agent_type}</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/5">
+            <X className="w-5 h-5 text-neutral-400" />
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] p-3 text-sm ${
+                msg.role === 'user'
+                  ? 'bg-[#F97316] text-black'
+                  : 'bg-white/5 border border-white/10 text-neutral-300'
+              }`}>
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="bg-white/5 p-3">
+                <Loader2 className="w-4 h-4 animate-spin text-[#F97316]" />
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <div className="p-4 border-t border-white/5">
+          <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Digite sua mensagem..."
+              className="flex-1 px-4 py-2 input-dark text-sm"
+            />
+            <button
+              type="submit"
+              disabled={!input.trim() || isLoading}
+              className="p-2 bg-[#F97316] text-black disabled:opacity-50"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Central Panel */}
+      <CentralPanel
+        isOpen={isPanelOpen}
+        onClose={() => setIsPanelOpen(false)}
+        content={panelContent || undefined}
+        agentName={agent.agent_name}
+      />
+    </>
+  );
+}
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add src/components/AgentChatPanel.tsx
+git commit -m "feat: add AgentChatPanel lateral chat component
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 14: Frontend - Tests
+
+**Files:**
+- Create: `tests/workspace.test.tsx` (ou usar arquivo de testes existente)
+
+**Nota:** Testes podem ser adicionados após implementação completa das tasks anteriores. Por enquanto, usar teste manual verificando:
+
+1. Acessar `/workspace/:slug`
+2. Verificar se sidebar mostra agentes
+3. Enviar mensagem via chat
+4. Verificar se painel central abre com conteúdo
+
+- [ ] **Step 1: Adicionar testes básicos (após implementar tasks anteriores)**
+
+```typescript
+// tests/workspace.test.tsx
+describe('AgentWorkspace', () => {
+  it('should render workspace with sidebar', () => {
+    // TODO: Add proper tests after implementation
+  });
+
+  it('should open central panel on rich content', () => {
+    // TODO: Add proper tests after implementation
+  });
+});
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add tests/workspace.test.tsx
+git commit -m "test: add workspace tests
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+```

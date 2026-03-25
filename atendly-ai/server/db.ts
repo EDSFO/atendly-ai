@@ -255,6 +255,42 @@ export async function initDb() {
       console.log("tenant_agent_subscriptions table may already exist:", err);
     }
 
+    // Migration: Create users table (funcionários da empresa)
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT,
+          name TEXT NOT NULL,
+          role TEXT DEFAULT 'user',
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log("users table created/verified");
+    } catch (err) {
+      console.log("users table may already exist:", err);
+    }
+
+    // Migration: Create user_agents table (agentes liberados por usuário)
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS user_agents (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id),
+          tenant_agent_id INTEGER NOT NULL REFERENCES tenant_agents(id),
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, tenant_agent_id)
+        )
+      `);
+      console.log("user_agents table created/verified");
+    } catch (err) {
+      console.log("user_agents table may already exist:", err);
+    }
+
     // Agent Documents (RAG)
     console.log("Creating agent_documents table...");
     await db.query(`

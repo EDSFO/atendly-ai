@@ -173,8 +173,8 @@ async function executeTool(toolName: string, args: any) {
   }
 }
 
-// Helper function to build RAG context (hybrid - global + local documents)
-async function buildRAGContext(agentId: number): Promise<string> {
+// Helper function to build RAG context (hybrid - global + local + tenant documents)
+async function buildRAGContext(agentId: number, tenantId?: number): Promise<string> {
   // 1. Buscar agente e seu parent (se existir)
   const agentRes = await db.query('SELECT * FROM agents WHERE id = $1', [agentId]);
   const agent = agentRes.rows[0];
@@ -184,6 +184,7 @@ async function buildRAGContext(agentId: number): Promise<string> {
   let contextParts: string[] = [];
 
   // 2. Se tem parent_agent_id, buscar documentos globais do template
+  // (documentos base copiados do catálogo para o tenant)
   if (agent.parent_agent_id) {
     const globalDocs = await db.query(
       `SELECT content FROM agent_documents WHERE agent_id = $1 AND is_global = true ORDER BY created_at DESC LIMIT 5`,
@@ -191,21 +192,36 @@ async function buildRAGContext(agentId: number): Promise<string> {
     );
     if (globalDocs.rows.length > 0) {
       contextParts.push('=== BASE DE CONHECIMENTO GLOBAL ===');
-      contextParts.push(globalDocs.rows.map((d: any) => d.content).join('\n\n'));
+      contextParts.push(globalDocs.rows.map((d: any) => d.content).join('\\n\\n'));
     }
   }
 
-  // 3. Buscar documentos locais do agente
-  const localDocs = await db.query(
-    `SELECT content FROM agent_documents WHERE agent_id = $1 AND is_global = false ORDER BY created_at DESC LIMIT 5`,
-    [agentId]
-  );
-  if (localDocs.rows.length > 0) {
-    contextParts.push('=== CONHECIMENTO ESPECÍFICO ===');
-    contextParts.push(localDocs.rows.map((d: any) => d.content).join('\n\n'));
+  // 3. Buscar documentos específicos do tenant (adicionados após ativação)
+  if (tenantId) {
+    // Documentos específicos do tenant (is_global = false, tenant_id = tenantId)
+    const tenantDocs = await db.query(
+      `SELECT content FROM agent_documents
+       WHERE agent_id = $1 AND tenant_id = $2 AND is_global = false
+       ORDER BY created_at DESC LIMIT 5`,
+      [agentId, tenantId]
+    );
+    if (tenantDocs.rows.length > 0) {
+      contextParts.push('=== CONHECIMENTO DO TENANT ===');
+      contextParts.push(tenantDocs.rows.map((d: any) => d.content).join('\\n\\n'));
+    }
+  } else {
+    // Fallback: buscar documentos locais do agente (sem filtro de tenant)
+    const localDocs = await db.query(
+      `SELECT content FROM agent_documents WHERE agent_id = $1 AND is_global = false ORDER BY created_at DESC LIMIT 5`,
+      [agentId]
+    );
+    if (localDocs.rows.length > 0) {
+      contextParts.push('=== CONHECIMENTO ESPECÍFICO ===');
+      contextParts.push(localDocs.rows.map((d: any) => d.content).join('\\n\\n'));
+    }
   }
 
-  return contextParts.join('\n\n');
+  return contextParts.join('\\n\\n');
 }
 
 // Helper function to apply personality to system prompt
@@ -306,9 +322,19 @@ export async function handleChat(message: string, tenant_id: number, history: an
 
   // If agent_id is provided, use that agent's configuration
   if (agent_id) {
-    // Buscar agente onde tenant_id = $2 OR is_global = true
+    // Buscar agente onde:
+    // 1. tenant_id = $2 (agente do tenant), OU
+    // 2. is_global = true (agente global), OU
+    // 3. está ativado via tenant_agents (agente do catálogo)
     const agentRes = await db.query(
-      'SELECT * FROM agents WHERE id = $1 AND (tenant_id = $2 OR is_global = true)',
+      `SELECT a.*, ta.custom_personality 
+       FROM agents a
+       LEFT JOIN tenant_agents ta ON ta.agent_id = a.id AND ta.tenant_id = $2 AND ta.is_active = true
+       WHERE a.id = $1 AND (
+         a.tenant_id = $2 OR 
+         a.is_global = true OR 
+         ta.id IS NOT NULL
+       )`,
       [agent_id, tenant_id]
     );
     const agent = agentRes.rows[0];
@@ -331,7 +357,11 @@ export async function handleChat(message: string, tenant_id: number, history: an
       }
 
       // Parse personality (string ou objeto)
-      if (agent.personality) {
+      // Prioridade: custom_personality do tenant_agents > personality do agente > personality do pai
+      if (agent.custom_personality) {
+        // custom_personality do tenant (editado pelo tenant)
+        personality = typeof agent.custom_personality === 'string' ? JSON.parse(agent.custom_personality) : agent.custom_personality;
+      } else if (agent.personality) {
         personality = typeof agent.personality === 'string' ? JSON.parse(agent.personality) : agent.personality;
       }
 
@@ -393,7 +423,7 @@ Hoje é ${new Date().toLocaleDateString('pt-BR')}.
 
   // Add RAG context if enabled - usando função híbrida
   if (useRAG && agent_id) {
-    const ragContext = await buildRAGContext(agent_id);
+    const ragContext = await buildRAGContext(agent_id, tenant_id);
     if (ragContext) {
       systemInstruction += `\n\n${ragContext}`;
     }
@@ -487,14 +517,36 @@ export async function handleMultiAgentChat(
     // Detect best agent type for this message
     const detectedType = preferred_agent_type || await detectAgentType(message, tenant_id);
 
-    // Find active agent of that type for this tenant
+    // Find active agent of that type for this tenant via tenant_agents table
+    // First check for orchestrator (parent) agents of the detected type
     const agentRes = await db.query(
-      `SELECT id FROM agents WHERE tenant_id = $1 AND agent_type = $2 AND is_active = true LIMIT 1`,
+      `SELECT ta.agent_id FROM tenant_agents ta
+       JOIN agents a ON ta.agent_id = a.id
+       WHERE ta.tenant_id = $1 AND a.agent_type = $2 AND ta.is_active = true
+       AND (a.parent_agent_id IS NULL OR a.is_orchestrator = true)
+       LIMIT 1`,
       [tenant_id, detectedType]
     );
 
     if (agentRes.rows.length > 0) {
-      const detectedAgentId = agentRes.rows[0].id;
+      const detectedAgentId = agentRes.rows[0].agent_id;
+      const response = await handleChat(message, tenant_id, history, detectedAgentId);
+      return {
+        response,
+        agent_id_used: detectedAgentId,
+        agent_type_detected: detectedType,
+        routed: true
+      };
+    }
+
+    // Fallback: try finding any active agent of that type (legacy support)
+    const legacyAgentRes = await db.query(
+      `SELECT id FROM agents WHERE tenant_id = $1 AND agent_type = $2 AND is_active = true LIMIT 1`,
+      [tenant_id, detectedType]
+    );
+
+    if (legacyAgentRes.rows.length > 0) {
+      const detectedAgentId = legacyAgentRes.rows[0].id;
       const response = await handleChat(message, tenant_id, history, detectedAgentId);
       return {
         response,

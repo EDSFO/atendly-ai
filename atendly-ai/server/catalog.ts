@@ -333,8 +333,8 @@ export async function activateTenantAgent(tenantId: number, agentId: number) {
           [tenantId, subAgent.id]
         );
 
-        // Copy global documents from catalog sub-agent to tenant sub-agent
-        await copyCatalogDocumentsToTenant(tenantId, subAgent.id, subAgent.id);
+        // Copy global documents from catalog sub-agent to tenant
+        await copyCatalogDocumentsToTenant(tenantId, subAgent.id);
       }
     }
   }
@@ -525,7 +525,7 @@ export async function deleteTenantSubAgentDocument(documentId: number, tenantId:
 }
 
 // Copy global documents from catalog sub-agents to tenant sub-agents when activating
-async function copyCatalogDocumentsToTenant(tenantId: number, catalogAgentId: number, tenantAgentId: number) {
+async function copyCatalogDocumentsToTenant(tenantId: number, catalogAgentId: number) {
   const catalogDocs = await db.query(
     'SELECT * FROM agent_documents WHERE agent_id = $1 AND is_global = true AND tenant_id IS NULL',
     [catalogAgentId]
@@ -534,9 +534,9 @@ async function copyCatalogDocumentsToTenant(tenantId: number, catalogAgentId: nu
   for (const doc of catalogDocs.rows) {
     await db.query(
       `INSERT INTO agent_documents (agent_id, source_type, content, file_url, website_url, is_global, tenant_id, processed_at)
-       VALUES ($1, $2, $3, $4, $5, false, $6, $7)`,
+       VALUES ($1, $2, $3, $4, $5, false, $6, NOW())`,
       [
-        tenantAgentId, // Use the tenant sub-agent's agent_id
+        catalogAgentId, // Reference the catalog sub-agent's ID (used in RAG queries)
         doc.source_type,
         doc.content,
         doc.file_url,

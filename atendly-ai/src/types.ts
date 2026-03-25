@@ -55,6 +55,12 @@ export interface UserAgent {
   user_id: number;
   tenant_agent_id: number;
   is_active: boolean;
+  agent_id?: number;
+  agent_name?: string;
+  agent_type?: string;
+  custom_personality?: any;
+  system_prompt?: string;
+  is_orchestrator?: boolean;
 }
 
 // Rich Content Types

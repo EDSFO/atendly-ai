@@ -26,7 +26,7 @@ const MaterialIcon = ({ icon, filled = false, className = '' }: { icon: string; 
 const Bot = () => <MaterialIcon icon="smart_toy" className="w-4 h-4" />;
 const Bolt = () => <MaterialIcon icon="bolt" className="w-3 h-3" />;
 
-export default function ChatWidget({ tenant }: ChatWidgetProps) {
+export default function ChatWidget({ tenant, onRichContent }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     { role: 'model', text: `Olá! Sou o assistente virtual da ${tenant.name}. Como posso ajudar?` }

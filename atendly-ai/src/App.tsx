@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { useTenant, useTenantData } from './hooks/useAtendly';
 import AdminDashboard from './components/AdminDashboard';
 import ChatWidget from './components/ChatWidget';
@@ -69,6 +69,10 @@ export default function App() {
     return <SystemCatalogManager onNavigate={navigate} />;
   }
 
+  // Parse path parts for routing
+  const parts = path.split('/').filter(Boolean);
+  const slug = parts[0];
+
   // Workspace route for agent users
   if (path.startsWith('/workspace/')) {
     const workspaceSlug = parts[1];
@@ -78,9 +82,6 @@ export default function App() {
   if (path === '/home' && loggedInTenant) {
     return <TenantApp tenant={loggedInTenant} onNavigate={navigate} onLogout={handleLogout} />;
   }
-
-  const parts = path.split('/').filter(Boolean);
-  const slug = parts[0];
 
   // Handle /admin routes for tenant
   if (slug === 'admin' && parts.length === 2) {

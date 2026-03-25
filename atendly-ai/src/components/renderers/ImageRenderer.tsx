@@ -1,10 +1,15 @@
+interface ImageContent {
+  url: string;
+  caption?: string;
+}
+
 interface Props {
-  content: { url: string; caption?: string } | { url: string };
+  content: ImageContent | string;
 }
 
 export default function ImageRenderer({ content }: Props) {
   const url = typeof content === 'string' ? content : content.url;
-  const caption = typeof content === 'string' ? undefined : content.caption;
+  const caption = typeof content === 'string' ? undefined : (content as ImageContent).caption;
 
   return (
     <div>

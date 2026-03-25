@@ -8,6 +8,7 @@ import { useTenant, useTenantData } from './hooks/useAtendly';
 import AdminDashboard from './components/AdminDashboard';
 import ChatWidget from './components/ChatWidget';
 import SystemCatalogManager from './components/CatalogManager';
+import AgentWorkspace from './components/AgentWorkspace';
 import { Loader2, Plus, X, Edit, Trash2, Check, FileText, Trash } from 'lucide-react';
 
 // Material Symbols Icons
@@ -68,6 +69,12 @@ export default function App() {
     return <SystemCatalogManager onNavigate={navigate} />;
   }
 
+  // Workspace route for agent users
+  if (path.startsWith('/workspace/')) {
+    const workspaceSlug = parts[1];
+    return <AgentWorkspacePage slug={workspaceSlug} onLogout={handleLogout} />;
+  }
+
   if (path === '/home' && loggedInTenant) {
     return <TenantApp tenant={loggedInTenant} onNavigate={navigate} onLogout={handleLogout} />;
   }
@@ -85,6 +92,42 @@ export default function App() {
   }
 
   return <TenantApp slug={slug} onNavigate={navigate} onLogout={handleLogout} />;
+}
+
+// Workspace route for agent users
+function AgentWorkspacePage({ slug, onLogout }: { slug: string; onLogout: () => void }) {
+  const { tenant, loading } = useTenant(slug);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  // Simulated login - in real app, use actual auth
+  useEffect(() => {
+    if (tenant) {
+      // For demo, get first user of tenant
+      fetch(`/api/tenants/${tenant.id}/users`)
+        .then(r => r.json())
+        .then(users => {
+          if (users.length > 0) {
+            setCurrentUser(users[0]);
+          }
+        });
+    }
+  }, [tenant]);
+
+  if (loading) {
+    return <div className="min-h-screen bg-[#050505] flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-[#F97316]" /></div>;
+  }
+
+  if (!tenant || !currentUser) {
+    return <div className="min-h-screen bg-[#050505] flex items-center justify-center"><p className="text-white">Não encontrado</p></div>;
+  }
+
+  return (
+    <AgentWorkspace
+      userId={currentUser.id}
+      tenantId={tenant.id}
+      onLogout={onLogout}
+    />
+  );
 }
 
 function LoginPage({ onLogin }: { onLogin: (tenant: any) => void }) {

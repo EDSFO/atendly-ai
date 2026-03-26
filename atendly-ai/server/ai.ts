@@ -312,17 +312,20 @@ ${cleanText}`
   }
 }
 
-export async function handleChat(message: string, tenant_id: number, history: any[], agent_id?: number) {
+export async function handleChat(message: string, tenant_id: number, history: any[], agent_id?: number, systemPromptOverride?: string) {
   // Get Tenant Info for Context
   const tenantRes = await db.query('SELECT name, segment, ai_context FROM tenants WHERE id = $1', [tenant_id]);
   const tenant = tenantRes.rows[0];
 
-  let systemInstruction = '';
+  let systemInstruction = systemPromptOverride || '';  // Use override if provided
+  if (systemPromptOverride) {
+    console.log(`[HANDLE_CHAT] Using systemPromptOverride (${systemPromptOverride.length} chars) for agent ${agent_id}`);
+  }
   let useRAG = true;
   let personality: any = null;
 
-  // If agent_id is provided, use that agent's configuration
-  if (agent_id) {
+  // If agent_id is provided and no override was passed, use that agent's configuration
+  if (agent_id && !systemPromptOverride) {
     // Buscar agente onde:
     // 1. tenant_id = $2 (agente do tenant), OU
     // 2. is_global = true (agente global), OU
@@ -399,7 +402,7 @@ Hoje é ${new Date().toLocaleDateString('pt-BR')}.
 `;
       useRAG = false;
     }
-  } else {
+  } else if (!systemPromptOverride) {
     // Default single-agent mode (legacy)
     systemInstruction = `
 Você é o assistente virtual da ${tenant.name} (${tenant.segment}).
@@ -422,8 +425,9 @@ Hoje é ${new Date().toLocaleDateString('pt-BR')}.
     systemInstruction = applyPersonality(systemInstruction, personality);
   }
 
-  // Add RAG context if enabled - usando função híbrida
-  if (useRAG && agent_id) {
+  // Add RAG context if enabled and NO override is being used
+  // (when override is passed, it already contains complete context)
+  if (useRAG && agent_id && !systemPromptOverride) {
     const ragContext = await buildRAGContext(agent_id, tenant_id);
     if (ragContext) {
       systemInstruction += `\n\n${ragContext}`;
@@ -503,12 +507,47 @@ export async function handleMultiAgentChat(
     agent_id?: number;         // Specific agent to use
     preferred_agent_type?: string; // Preferred type for auto-routing
     auto_route?: boolean;      // Enable automatic routing
+    return_rich_content?: boolean; // Return rich content for orchestrators
   } = {}
 ) {
-  const { agent_id, preferred_agent_type, auto_route = false } = options;
+  const { agent_id, preferred_agent_type, auto_route = false, return_rich_content = false } = options;
+
+  // Helper to check if agent is orchestrator
+  const isOrchestrator = async (agId: number): Promise<boolean> => {
+    const res = await db.query('SELECT is_orchestrator FROM agents WHERE id = $1', [agId]);
+    return res.rows.length > 0 && res.rows[0].is_orchestrator === true;
+  };
 
   // If specific agent provided, use it
   if (agent_id) {
+    // Check if orchestrator and get agent_type
+    const agentInfo = await db.query(
+      'SELECT is_orchestrator, agent_type FROM agents WHERE id = $1',
+      [agent_id]
+    );
+    const isOrchestratorAgent = agentInfo.rows.length > 0 && agentInfo.rows[0].is_orchestrator === true;
+    const agentType = agentInfo.rows.length > 0 ? agentInfo.rows[0].agent_type : 'custom';
+
+    // If orchestrator and rich content requested, use multi-agent orchestration
+    if (isOrchestratorAgent && return_rich_content) {
+      const orchestrationResult = await orchestrateWithSubAgents(
+        message,
+        tenant_id,
+        agent_id,
+        agentType,
+        history
+      );
+
+      return {
+        response: orchestrationResult.text,
+        agent_id_used: agent_id,
+        routed: false,
+        rich_content: orchestrationResult.rich_content,
+        sub_agents_used: orchestrationResult.sub_agent_results?.map(r => r.name)
+      };
+    }
+
+    // For non-orchestrator or no rich content, use direct chat
     const response = await handleChat(message, tenant_id, history, agent_id);
     return { response, agent_id_used: agent_id, routed: false };
   }
@@ -599,43 +638,45 @@ export async function handleAgentChat(
     return { text: response };
   }
 
-  // Get RAG context for the tenant
-  const ragContext = await buildRAGContext(orchestrator.agent_id, tenant_id);
+  let response: string;
+  let richContent: any;
 
-  // Build system prompt with RAG context
-  let systemPrompt = orchestrator.system_prompt || '';
-  if (ragContext) {
-    systemPrompt += `\n\n${ragContext}`;
+  // When return_rich_content is true and we have an orchestrator, use multi-agent orchestration
+  if (options.return_rich_content) {
+    const orchestrationResult = await orchestrateWithSubAgents(
+      message,
+      tenant_id,
+      orchestrator.agent_id,
+      orchestrator.agent_type,
+      history
+    );
+    response = orchestrationResult.text;
+    richContent = orchestrationResult.rich_content;
+  } else {
+    // For regular chat, use handleChat directly
+    response = await handleChat(message, tenant_id, history, orchestrator.agent_id);
+
+    // Determine content type based on agent_type
+    let contentType = 'text';
+    let panel = 'default';
+
+    if (orchestrator.agent_type === 'marketing') {
+      contentType = 'carousel';
+      panel = 'marketing';
+    } else if (orchestrator.agent_type === 'sales') {
+      contentType = 'card';
+      panel = 'sales';
+    } else if (orchestrator.agent_type === 'suporte') {
+      contentType = 'text';
+      panel = 'support';
+    }
+
+    richContent = {
+      type: contentType,
+      content: buildRichContentFromResponse(response, orchestrator.agent_type),
+      panel
+    };
   }
-
-  // Use handleChat to process the message
-  const response = await handleChat(message, tenant_id, history, orchestrator.agent_id);
-
-  // Determine content type based on agent_type
-  let contentType = 'text';
-  let panel = 'default';
-
-  if (orchestrator.agent_type === 'marketing') {
-    contentType = 'carousel';
-    panel = 'marketing';
-  } else if (orchestrator.agent_type === 'sales') {
-    contentType = 'card';
-    panel = 'sales';
-  } else if (orchestrator.agent_type === 'suporte') {
-    contentType = 'text';
-    panel = 'support';
-  }
-
-  // Build rich content based on response and agent type
-  // NOTE: This is a basic implementation. For production, consider:
-  // 1. Using LLM to structure the response into proper format
-  // 2. JSON parsing if the LLM returns structured JSON
-  // 3. Different prompts per agent type for better formatting
-  const richContent = options.return_rich_content ? {
-    type: contentType,
-    content: buildRichContentFromResponse(response, orchestrator.agent_type),
-    panel
-  } : undefined;
 
   return {
     text: response,
@@ -685,4 +726,224 @@ function buildRichContentFromResponse(text: string, agentType: string): any {
     };
   }
   return { content: text };
+}
+
+// ========== MULTI-AGENT ORCHESTRATION ==========
+
+interface OrchestrationResult {
+  text: string;
+  rich_content?: {
+    type: string;
+    content: any;
+    panel?: string;
+  };
+  sub_agent_results?: {
+    name: string;
+    output: string;
+  }[];
+}
+
+async function orchestrateWithSubAgents(
+  message: string,
+  tenant_id: number,
+  orchestratorAgentId: number,
+  orchestratorType: string,
+  history: any[]
+): Promise<OrchestrationResult> {
+  // Get sub-agents for this orchestrator
+  const subAgentsResult = await db.query(
+    'SELECT id, name, agent_type, system_prompt FROM agents WHERE parent_agent_id = $1 ORDER BY agent_order',
+    [orchestratorAgentId]
+  );
+  const subAgents = subAgentsResult.rows;
+
+  // Get tenant context from RAG
+  const ragContext = await buildRAGContext(orchestratorAgentId, tenant_id);
+
+  // Analyze request to determine which agents to use
+  const messageLower = message.toLowerCase();
+  const isLinkedInPost = /linkedin|post|publicação|redes sociais|facebook|instagram/i.test(messageLower);
+  const isEmail = /email|e-mail|campanha/i.test(messageLower);
+  const isSales = /proposta|报价|comparação|contrato/i.test(messageLower);
+  const isResearch = /pesquisar|analisar|estudar|mercado|concorrente/i.test(messageLower);
+
+  const results: OrchestrationResult['sub_agent_results'] = [];
+  let consolidatedText = '';
+
+  try {
+    // For LinkedIn posts, use Copy Agent
+    if (isLinkedInPost) {
+      console.log('[ORCHESTRATION] LinkedIn post detected, looking for COPY agent');
+      console.log('[ORCHESTRATION] Available sub-agents:', subAgents.map(a => ({ id: a.id, name: a.name })));
+      const copyAgent = subAgents.find((a: any) => a.name.includes('COPY') || a.name.includes('Content'));
+      console.log('[ORCHESTRATION] Found COPY agent:', copyAgent?.id, copyAgent?.name);
+
+      if (copyAgent) {
+        // Build a COMPLETE prompt for LinkedIn posts - override the old one completely
+        const copySystemPrompt = `# ROLE
+Você é um Copywriter especialista em criar posts para LinkedIn que viralizam.
+
+# REGRAS FUNDAMENTAIS
+1. NUNCA peça mais informações - gere o conteúdo completo direto
+2. Assuma valores razoáveis para barbearias brasileiras
+3. Crie conteúdo PRONTO PARA PUBLICACAO
+
+# FORMATO DE OUTPUT
+Gere EXATAMENTE neste formato:
+
+**Post para LinkedIn:**
+[GANCHO - primeira linha com impacto emocional ou estatistica]
+
+[CORPO - 2-3 paragrafos que entregam valor e contam uma historia]
+
+[Call-to-action claro]
+
+#hashtags #separadas #por #espaco
+
+---
+
+GERE 3 VARIAÇÕES DIFERENTES, cada uma com angulo diferente.
+
+# SOBRE O TOPICO
+${message}
+
+# CONTEXTO ADICIONAL
+${ragContext || 'Barbearia moderna brasileira. Servicos: barba, cabelo, tratamento facial. Publico: homens 25-50 anos.'}
+
+# EXEMPLO DE OUTPUT
+**Variação 1 - Estatistica**
+**Post para LinkedIn:**
+🚀 **72% dos recrutadores julgam candidatos pela aparencia nos primeiros 6 segundos**
+
+[Corpo sobre importancia da aparencia...]
+
+[Call-to-action]
+
+#barbearia #cuidadoMasculino #imagemPessoal
+
+---
+
+**Variação 2 - Storytelling**
+**Post para LinkedIn:**
+[Historia de transformacao...]
+
+[Aprendizado...]
+
+[CTA]
+
+---
+
+**Variação 3 - Educativo**
+**Post para LinkedIn:**
+[Ensino sobre cuidados...]
+
+[Aplicacao pratica...]
+
+[CTA]`;
+
+        const copyResult = await callAgentWithContext(
+          message,
+          tenant_id,
+          copyAgent.id,
+          copySystemPrompt,
+          history
+        );
+        results.push({ name: copyAgent.name, output: copyResult.response });
+        consolidatedText = copyResult.response;
+      }
+    }
+    // For general requests, use orchestrator's own capabilities
+    else {
+      const orchestratorResult = await handleChat(message, tenant_id, history, orchestratorAgentId);
+      consolidatedText = orchestratorResult;
+    }
+
+    // Build rich content from results
+    let richContent: OrchestrationResult['rich_content'];
+
+    if (isLinkedInPost && consolidatedText) {
+      // Parse the LinkedIn post into structured items
+      const items = parseLinkedInPost(consolidatedText);
+      richContent = {
+        type: 'carousel',
+        content: { items },
+        panel: 'marketing'
+      };
+    } else if (consolidatedText) {
+      richContent = {
+        type: 'text',
+        content: { text: consolidatedText },
+        panel: 'default'
+      };
+    }
+
+    return {
+      text: consolidatedText,
+      rich_content: richContent,
+      sub_agent_results: results
+    };
+
+  } catch (error) {
+    console.error('Orchestration error:', error);
+    // Fallback to direct chat
+    const fallback = await handleChat(message, tenant_id, history, orchestratorAgentId);
+    return {
+      text: fallback,
+      sub_agent_results: results
+    };
+  }
+}
+
+async function callAgentWithContext(
+  message: string,
+  tenant_id: number,
+  agent_id: number,
+  systemPrompt: string,
+  history: any[]
+): Promise<{ response: string }> {
+  // Pass system prompt directly to handleChat - avoids database state issues
+  console.log(`[CALL_AGENT] Calling agent ${agent_id} with custom prompt (${systemPrompt.length} chars)`);
+  const response = await handleChat(message, tenant_id, history, agent_id, systemPrompt);
+  console.log(`[CALL_AGENT] Agent ${agent_id} response (${response?.length || 0} chars)`);
+  return { response };
+}
+
+function parseLinkedInPost(text: string): any[] {
+  // Try to parse structured content
+  const items: any[] = [];
+
+  // Split by "---" or numbered sections
+  const sections = text.split(/---|\n(?=\d+\.)|(?=\*\*Post)/).filter(s => s.trim());
+
+  if (sections.length > 1) {
+    // Multiple items found
+    for (const section of sections) {
+      const trimmed = section.trim();
+      if (trimmed.length > 50) { // Skip very short sections
+        const titleMatch = trimmed.match(/^\*\*([^*]+)\*\*/);
+        const title = titleMatch ? titleMatch[1] : `Opção ${items.length + 1}`;
+        const content = trimmed.replace(/^\*\*([^*]+)\*\*:?/, '').trim();
+
+        items.push({
+          title,
+          caption: content
+        });
+      }
+    }
+  }
+
+  // If no structured items found, create single item
+  if (items.length === 0) {
+    // Extract hashtags
+    const hashtags = text.match(/#[a-zA-Z]+/g)?.join(' ') || '';
+    const cleanText = text.replace(/#[a-zA-Z]+/g, '').trim();
+
+    items.push({
+      title: 'Post para LinkedIn',
+      caption: cleanText,
+      hashtags
+    });
+  }
+
+  return items.slice(0, 5); // Limit to 5 items
 }

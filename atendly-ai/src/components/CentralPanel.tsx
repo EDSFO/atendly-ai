@@ -9,10 +9,18 @@ interface Props {
   agentName?: string;
   isLoading?: boolean;
   error?: string;
+  onAction?: (action: string, data: any) => void;
+  generatingImages?: boolean;
 }
 
-export default function CentralPanel({ isOpen, onClose, content, agentName, isLoading, error }: Props) {
+export default function CentralPanel({ isOpen, onClose, content, agentName, isLoading, error, onAction, generatingImages }: Props) {
   if (!isOpen) return null;
+
+  const handleAction = (action: string, data: any) => {
+    if (onAction) {
+      onAction(action, data);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-40 flex">
@@ -27,6 +35,11 @@ export default function CentralPanel({ isOpen, onClose, content, agentName, isLo
             <span className="text-[10px] font-mono uppercase text-neutral-500 tracking-widest">
               {agentName || 'Agente'}
             </span>
+            {generatingImages && (
+              <span className="ml-3 text-[10px] font-mono text-[#F97316]">
+                Gerando imagens...
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -39,23 +52,30 @@ export default function CentralPanel({ isOpen, onClose, content, agentName, isLo
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
           {isLoading && (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center justify-center h-full gap-4">
               <Loader2 className="w-8 h-8 animate-spin text-[#F97316]" />
+              <p className="text-neutral-500 text-sm">Processando...</p>
             </div>
           )}
 
           {error && (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center justify-center h-full gap-4">
               <p className="text-red-500">{error}</p>
+              <button
+                onClick={() => handleAction('retry', null)}
+                className="px-4 py-2 bg-white/10 text-white text-sm hover:bg-white/20"
+              >
+                Tentar novamente
+              </button>
             </div>
           )}
 
           {!isLoading && !error && content && (
-            <RichContentRenderer content={content} />
+            <RichContentRenderer content={content} onAction={handleAction} />
           )}
 
           {!isLoading && !error && !content && (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center justify-center h-full gap-4">
               <p className="text-neutral-500">Aguardando resposta do agente...</p>
             </div>
           )}

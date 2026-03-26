@@ -45,9 +45,12 @@ export default function ChatWidget({ tenant, onRichContent }: ChatWidgetProps) {
       .then(data => {
         setAgents(data);
         if (data.length > 0) {
+          // tenant.default_agent_id is agents.id, but data items have tenant_agents.id as 'id'
+          // We need to find the agent where agent_id matches default_agent_id
           const defaultId = tenant.default_agent_id;
-          const validDefault = defaultId && data.some((a: any) => a.id === defaultId);
-          setSelectedAgentId(validDefault ? defaultId : data[0].id);
+          const agentWithDefaultId = data.find((a: any) => a.agent_id === defaultId);
+          const targetId = agentWithDefaultId?.id || data[0].id;
+          setSelectedAgentId(targetId);
         }
       })
       .catch(() => {});
@@ -72,7 +75,8 @@ export default function ChatWidget({ tenant, onRichContent }: ChatWidgetProps) {
     setIsLoading(true);
 
     try {
-      const agentIdToUse = selectedAgentId || (agents.length > 0 ? agents[0].id : null);
+      // Use agents.id (from tenant_agents.agent_id), not tenant_agents.id
+      const agentIdToUse = selectedAgent?.agent_id || (agents.length > 0 ? agents[0].agent_id : null);
 
       const res = await fetch('/api/chat', {
         method: 'POST',

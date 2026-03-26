@@ -9,6 +9,8 @@ import AdminDashboard from './components/AdminDashboard';
 import ChatWidget from './components/ChatWidget';
 import SystemCatalogManager from './components/CatalogManager';
 import AgentWorkspace from './components/AgentWorkspace';
+import CentralPanel from './components/CentralPanel';
+import { RichContent } from './types';
 import { Loader2, Plus, X, Edit, Trash2, Check, FileText, Trash } from 'lucide-react';
 
 // Material Symbols Icons
@@ -386,6 +388,57 @@ function TenantApp({ slug, onNavigate, onLogout, loggedInTenant }: {
     content: '',
     website_url: ''
   });
+
+  // Central Panel state for rich content
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [panelContent, setPanelContent] = useState<RichContent | null>(null);
+  const [panelAgentName, setPanelAgentName] = useState<string>('');
+  const [generatingImages, setGeneratingImages] = useState(false);
+
+  // Handler for rich content from ChatWidget
+  const handleRichContent = (content: RichContent, agentName: string) => {
+    setPanelContent(content);
+    setPanelAgentName(agentName);
+    setIsPanelOpen(true);
+  };
+
+  // Handler for actions from CentralPanel
+  const handlePanelAction = async (action: string, data: any) => {
+    if (action === 'generate_images' && data?.items) {
+      setGeneratingImages(true);
+      try {
+        const res = await fetch('/api/images/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompts: data.items.map((item: any) => ({
+              caption: item.caption || item.title || '',
+            })),
+            tenant_id: tenant?.id,
+          }),
+        });
+
+        if (res.ok) {
+          const result = await res.json();
+          // Update carousel items with generated images
+          if (panelContent?.type === 'carousel' && result.images) {
+            const updatedItems = panelContent.content.items.map((item: any, idx: number) => ({
+              ...item,
+              image: result.images[idx] || item.image,
+            }));
+            setPanelContent({
+              ...panelContent,
+              content: { items: updatedItems },
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Error generating images:', e);
+      } finally {
+        setGeneratingImages(false);
+      }
+    }
+  };
 
   // Fetch tenant agents and catalog
   useEffect(() => {
@@ -988,7 +1041,17 @@ function TenantApp({ slug, onNavigate, onLogout, loggedInTenant }: {
         </div>
       )}
 
-      <ChatWidget tenant={tenant} />
+      <ChatWidget tenant={tenant} onRichContent={handleRichContent} />
+
+      {/* Central Panel for Rich Content */}
+      <CentralPanel
+        isOpen={isPanelOpen}
+        onClose={() => setIsPanelOpen(false)}
+        content={panelContent || undefined}
+        agentName={panelAgentName}
+        onAction={handlePanelAction}
+        generatingImages={generatingImages}
+      />
     </div>
   );
 }

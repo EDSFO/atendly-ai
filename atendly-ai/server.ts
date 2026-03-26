@@ -438,19 +438,27 @@ async function startServer() {
   // Chat Endpoint
   app.post("/api/chat", async (req, res) => {
     const { message, tenant_id, history, agent_id, auto_route } = req.body;
+    console.log('[CHAT] Received:', { agent_id, tenant_id, hasMessage: !!message });
     try {
       let response = '';
       let agentIdUsed: number | null = null;
 
       if (agent_id || auto_route) {
-        // Use multi-agent chat
+        // Use multi-agent chat with rich content support
         const result = await handleMultiAgentChat(message, tenant_id, history || [], {
           agent_id,
-          auto_route
+          auto_route,
+          return_rich_content: true  // Always request rich content for orchestrators
         });
         response = result.response;
         agentIdUsed = result.agent_id_used;
-        res.json({ text: response, ...result });
+
+        // If rich_content is returned, include it in response
+        if (result.rich_content) {
+          res.json({ text: response, rich_content: result.rich_content, ...result });
+        } else {
+          res.json({ text: response, ...result });
+        }
       } else {
         // Legacy single-agent mode
         response = await handleChat(message, tenant_id, history || []);
@@ -1259,6 +1267,87 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Chat failed" });
+    }
+  });
+
+  // ========== IMAGE GENERATION API ==========
+
+  app.post("/api/images/generate", async (req, res) => {
+    try {
+      const { prompts, tenant_id } = req.body;
+
+      if (!prompts || !Array.isArray(prompts)) {
+        return res.status(400).json({ error: "prompts array is required" });
+      }
+
+      // Leonardo.ai API integration
+      const LEONARDO_API_KEY = process.env.LEONARDO_API_KEY;
+
+      if (!LEONARDO_API_KEY) {
+        // Return placeholder images if no API key
+        return res.json({
+          images: prompts.map((p: any, i: number) => ({
+            url: `https://picsum.photos/seed/${Date.now() + i}/800/600`,
+            placeholder: true
+          }))
+        });
+      }
+
+      // Generate images using Leonardo.ai
+      const images = await Promise.all(prompts.map(async (prompt: any, index: number) => {
+        try {
+          const response = await fetch('https://cloud.leonardo.ai/api/rest/v1/generations', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LEONARDO_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              prompt: `${prompt.caption} | high quality, professional, linkedin post image`,
+              model_id: '6bef9f1d-29f0-4965-84f8-4a3765a52d1c', // Leonardo Phoenix
+              promptMagic: true,
+              width: 1024,
+              height: 768
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.generations?.length > 0) {
+            // Poll for completion
+            const generationId = data.generations[0].id;
+            let imageUrl = null;
+            let attempts = 0;
+
+            while (!imageUrl && attempts < 20) {
+              await new Promise(r => setTimeout(r,2000));
+
+              const statusRes = await fetch(`https://cloud.leonardo.ai/api/rest/v1/generations/${generationId}`, {
+                headers: { 'Authorization': `Bearer ${LEONARDO_API_KEY}` }
+              });
+              const statusData = await statusRes.json();
+
+              if (statusData.generations?.[0]?.status === 'COMPLETE') {
+                imageUrl = statusData.generations[0].image_url;
+              }
+              attempts++;
+            }
+
+            return { url: imageUrl || `https://picsum.photos/seed/${Date.now() + index}/800/600` };
+          }
+
+          return { url: `https://picsum.photos/seed/${Date.now() + index}/800/600` };
+        } catch (e) {
+          console.error('Leonardo error:', e);
+          return { url: `https://picsum.photos/seed/${Date.now() + index}/800/600` };
+        }
+      }));
+
+      res.json({ images });
+
+    } catch (error) {
+      console.error('Image generation error:', error);
+      res.status(500).json({ error: "Image generation failed" });
     }
   });
 
